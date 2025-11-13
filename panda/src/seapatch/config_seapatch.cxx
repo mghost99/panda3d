@@ -4,6 +4,7 @@
 #include "config_seapatch.h"
 #include "seaPatchRoot.h"
 #include "seaPatchNode.h"
+#include "cLerpSeaPatchInterval.h"
 
 #include "dconfig.h"
 
@@ -36,5 +37,6 @@ init_libseapatch() {
 
   SeaPatchRoot::init_type();
   SeaPatchNode::init_type();
+  CLerpSeaPatchInterval::init_type();
 }
 

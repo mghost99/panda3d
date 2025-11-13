@@ -3,4 +3,5 @@
 #include "config_seapatch.cxx"
 #include "seaPatchRoot.cxx"
 #include "seaPatchNode.cxx"
+#include "cLerpSeaPatchInterval.cxx"
 

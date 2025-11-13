@@ -5434,6 +5434,8 @@ if not PkgSkip("PIRATES"):
 #
 if not PkgSkip("PIRATES"):
     TargetAdd('libp3pirates.dll', input='p3seapatch_composite1.obj')
+    if not PkgSkip("DIRECT"):
+        TargetAdd('libp3pirates.dll', input='libp3direct.dll')
     TargetAdd('libp3pirates.dll', input=COMMON_PANDA_LIBS)
 
     PyTargetAdd('pirates_module.obj', input='libp3seapatch.in')

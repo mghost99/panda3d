@@ -3,6 +3,10 @@
 
 #include "piratesbase.h"
 #include "pandaNode.h"
+#include "pointerTo.h"
+#include "geomNode.h"
+
+class SeaPatchRoot;
 
 // Declare our notify category.
 NotifyCategoryDecl(SeaPatchNode, EXPCL_PIRATES, EXPTP_PIRATES);
@@ -20,14 +24,25 @@ PUBLISHED:
 		ANONE,
 	};
 
-	SeaPatchNode(const std::string &name);
+	SeaPatchNode(const std::string &name, SeaPatchRoot *patch);
 
 	INLINE void enable();
 	INLINE void disable();
 	INLINE bool is_enabled() const;
 
+	INLINE void set_want_reflect(bool flag);
+	INLINE bool get_want_reflect() const;
+
+	INLINE void set_want_color(bool flag);
+	INLINE bool get_want_color() const;
+
+	void collect_geometry();
+
 private:
 	bool _enabled;
+	bool _want_reflect;
+	bool _want_color;
+	PT(SeaPatchRoot) _patch;
 
 public:
 	static TypeHandle get_class_type() {

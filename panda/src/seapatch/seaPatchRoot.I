@@ -11,15 +11,9 @@ INLINE bool SeaPatchRoot::is_enabled() const {
 }
 
 INLINE void SeaPatchRoot::set_center(NodePath center) {
-	// Cast the geometry of the NodePath into a GeometricBoundingVolume.
-	PT(GeometricBoundingVolume) gbv = center.get_bounds()->as_geometric_bounding_volume();
-
-	// Make sure we have geometry to work with.
-	nassertv(gbv != NULL);
-	nassertv(!gbv->is_infinite() && !gbv->is_empty());
-
-	// Calculate and set our center.
-	_center = gbv->get_approx_center();
+	// Just use the position of the node directly, don't try to get bounds
+	// (cameras and other nodes may have infinite bounds)
+	_center = center.get_pos();
 }
 
 INLINE LPoint3f SeaPatchRoot::get_center() const {
@@ -98,6 +92,127 @@ INLINE float SeaPatchRoot::get_radius() const {
 	return _radius;
 }
 
+// Wave management
 INLINE void SeaPatchRoot::enable_wave(int waveId) {
-	return;
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].enabled = true;
+	}
+}
+
+INLINE void SeaPatchRoot::disable_wave(int waveId) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].enabled = false;
+	}
+}
+
+INLINE bool SeaPatchRoot::is_wave_enabled(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].enabled;
+	}
+	return false;
+}
+
+INLINE int SeaPatchRoot::get_num_waves() const {
+	return _num_waves;
+}
+
+// Wave properties
+INLINE void SeaPatchRoot::set_wave_amplitude(int waveId, float amplitude) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].amplitude = amplitude;
+	}
+}
+
+INLINE float SeaPatchRoot::get_wave_amplitude(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].amplitude;
+	}
+	return 0.0f;
+}
+
+INLINE void SeaPatchRoot::set_wave_length(int waveId, float length) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].length = length;
+	}
+}
+
+INLINE float SeaPatchRoot::get_wave_length(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].length;
+	}
+	return 1.0f;
+}
+
+INLINE void SeaPatchRoot::set_wave_speed(int waveId, float speed) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].speed = speed;
+	}
+}
+
+INLINE float SeaPatchRoot::get_wave_speed(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].speed;
+	}
+	return 1.0f;
+}
+
+INLINE void SeaPatchRoot::set_wave_direction(int waveId, LVecBase2f dir) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].direction = dir;
+	}
+}
+
+INLINE LVecBase2f SeaPatchRoot::get_wave_direction(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].direction;
+	}
+	return LVecBase2f(1, 0);
+}
+
+INLINE void SeaPatchRoot::set_choppy_k(int waveId, int choppy) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].choppy_k = choppy;
+	}
+}
+
+INLINE int SeaPatchRoot::get_choppy_k(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].choppy_k;
+	}
+	return 0;
+}
+
+INLINE void SeaPatchRoot::set_wave_target(int waveId, int target) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].target = target;
+	}
+}
+
+INLINE int SeaPatchRoot::get_wave_target(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].target;
+	}
+	return WTZ;
+}
+
+INLINE void SeaPatchRoot::set_wave_func(int waveId, int func) {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		_waves[waveId].func = func;
+	}
+}
+
+INLINE int SeaPatchRoot::get_wave_func(int waveId) const {
+	if (waveId >= 0 && waveId < MAX_WAVES) {
+		return _waves[waveId].func;
+	}
+	return WFSin;
+}
+
+// Animation
+INLINE void SeaPatchRoot::animate_height(bool flag) {
+	_animate_height = flag;
+}
+
+INLINE void SeaPatchRoot::animate_uv(bool flag) {
+	_animate_uv = flag;
 }
