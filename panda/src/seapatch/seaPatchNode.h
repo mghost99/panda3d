@@ -9,7 +9,7 @@ NotifyCategoryDecl(SeaPatchNode, EXPCL_PIRATES, EXPTP_PIRATES);
 
 static const int noise_table_size = 64;
 
-class SeaPatchNode : public PandaNode {
+class EXPCL_PIRATES SeaPatchNode : public PandaNode {
 
 PUBLISHED:
 

@@ -12,7 +12,7 @@
 // Declare our notify category.
 NotifyCategoryDecl(SeaPatchRoot, EXPCL_PIRATES, EXPTP_PIRATES);
 
-class SeaPatchRoot : public TypedObject {
+class EXPCL_PIRATES SeaPatchRoot : public TypedObject {
 
 PUBLISHED:
 
