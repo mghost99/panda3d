@@ -20,6 +20,7 @@
 #include "datagram.h"
 #include "datagramIterator.h"
 #include "pStatTimer.h"
+#include <iostream>
 
 #ifdef HAVE_PYTHON
 
@@ -591,7 +592,15 @@ ai_format_generate(PyObject *distobj, DOID_TYPE do_id,
     // one is about the visibility container parent, i.e.  the zone parent:
     packer.raw_pack_uint32(parent_id);
     packer.raw_pack_uint32(zone_id);
-    packer.raw_pack_uint16(_this->_number);
+    // DEBUG: Log the dclass ID being used
+    int dclass_id = _this->get_number();
+    if (do_id == 401002548 || dclass_id > 1000) {
+      std::cerr << "DEBUG aiFormatGenerate: doId=" << do_id 
+                << ", className=" << _this->get_name()
+                << ", _number=" << _this->_number
+                << ", get_number()=" << dclass_id << std::endl;
+    }
+    packer.raw_pack_uint16(dclass_id);
   } else {
     // Or we want to use OTP's OBJECT_GENERATE instead.
     if (has_optional_fields) {
@@ -604,7 +613,8 @@ ai_format_generate(PyObject *distobj, DOID_TYPE do_id,
     // one is about the visibility container parent, i.e.  the zone parent:
     packer.raw_pack_uint32(parent_id);
     packer.raw_pack_uint32(zone_id);
-    packer.raw_pack_uint16(_this->_number);
+    // Use get_number() to ensure we get the correct class ID that matches Python's getNumber()
+    packer.raw_pack_uint16(_this->get_number());
     packer.raw_pack_uint32(do_id);
   }
 
