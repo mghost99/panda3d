@@ -50,10 +50,6 @@ ConfigVariableBool handle_datagrams_internally
           "for performance reasons.  When it is false, all datagrams "
           "are handled by the Python implementation."));
 
-ConfigVariableBool astron_support
-("astron-support", false,
- PRC_DESC("When this is true, enables support for Astron protocol features."));
-
 /**
  * Initializes the library.  This must be called at least once before any of
  * the functions or classes in this library can be used.  Normally it will be
