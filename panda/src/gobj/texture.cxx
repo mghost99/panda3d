@@ -991,6 +991,10 @@ load_related(const InternalName *suffix) const {
   main.set_basename_wo_extension(main.get_basename_wo_extension() +
                                  suffix->get_name());
   PT(Texture) res;
+  
+  // Use LoaderOptions that respect the preload-textures config setting
+  LoaderOptions options;
+  
   if (!cdata->_alpha_fullpath.empty()) {
     Filename alph = cdata->_alpha_fullpath;
     alph.set_basename_wo_extension(alph.get_basename_wo_extension() +
@@ -1001,17 +1005,17 @@ load_related(const InternalName *suffix) const {
       // to load the texture.
       res = TexturePool::load_texture(main, alph,
                                       cdata->_primary_file_num_channels,
-                                      cdata->_alpha_file_channel, false);
+                                      cdata->_alpha_file_channel, false, options);
     } else {
       // If the alpha variant of the filename doesn't exist, just go ahead and
       // load the related texture without alpha.
-      res = TexturePool::load_texture(main);
+      res = TexturePool::load_texture(main, 0, false, options);
     }
 
   } else {
     // No alpha filename--just load the single file.  It doesn't necessarily
     // have the same number of channels as this one.
-    res = TexturePool::load_texture(main);
+    res = TexturePool::load_texture(main, 0, false, options);
   }
 
   // I'm casting away the const-ness of 'this' because this field is only a
@@ -3385,9 +3389,11 @@ do_read_one(CData *cdata, const Filename &fullpath, const Filename &alpha_fullpa
       cdata->_alpha_filename = alpha_fullpath;
 
       // The first time we set the filename via a read() operation, we clear
-      // keep_ram_image.  The user can always set it again later if he needs
-      // to.
-      cdata->_keep_ram_image = false;
+      // keep_ram_image only if preload is not enabled.  The user can always
+      // set it again later if he needs to.
+      if (!(options.get_texture_flags() & LoaderOptions::TF_preload)) {
+        cdata->_keep_ram_image = false;
+      }
     }
 
     cdata->_fullpath = fullpath;

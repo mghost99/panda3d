@@ -408,7 +408,10 @@ ns_load_texture(const Filename &orig_filename, int primary_file_num_channels,
       }
       tex->set_fullpath(key._fullpath);
       tex->clear_alpha_fullpath();
-      tex->set_keep_ram_image(false);
+      // Respect preload-textures setting - if enabled, keep RAM image
+      if (!(options.get_texture_flags() & LoaderOptions::TF_preload)) {
+        tex->set_keep_ram_image(false);
+      }
 
     } else {
       // Read it the conventional way.

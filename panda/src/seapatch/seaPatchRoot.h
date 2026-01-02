@@ -1,165 +1,183 @@
-#ifndef SEAPATCHROOT_H
-#define SEAPATCHROOT_H
+#ifndef __SEA_PATCH_ROOT_H__
+#define __SEA_PATCH_ROOT_H__
 
 #include "piratesbase.h"
-
-#include "notifyCategoryProxy.h"
-#include "typedReferenceCount.h"
 #include "nodePath.h"
-#include "luse.h"
-#include "geometricBoundingVolume.h"
-
-// Declare our notify category.
-NotifyCategoryDecl(SeaPatchRoot, EXPCL_PIRATES, EXPTP_PIRATES);
+#include "perlinNoise3.h"
+#include "typedReferenceCount.h"
 
 class EXPCL_PIRATES SeaPatchRoot : public TypedReferenceCount {
+    PUBLISHED:
+        enum WaveTarget {
+            WTZ,
+            WTU,
+            WTV
+        };
 
-PUBLISHED:
+        enum WaveFunction {
+            WFSin,
+            WFNoise
+        };
 
-	SeaPatchRoot();
+        INLINE SeaPatchRoot();
+        INLINE virtual ~SeaPatchRoot();
 
-	INLINE void enable();
-	INLINE void disable();
-	INLINE bool is_enabled() const;
+        INLINE void reset_environment();
+        INLINE void reset_properties();
+        INLINE void assign_environment_from(SeaPatchRoot* other);
 
-	INLINE void set_center(NodePath center);
-	INLINE LPoint3f get_center() const;
+        INLINE void enable();
+        INLINE void disable();
+        INLINE bool is_enabled();
 
-	INLINE void set_anchor(NodePath anchor);
-	INLINE NodePath get_anchor() const;
+        INLINE void set_anchor(NodePath anchor);
+        INLINE NodePath& get_anchor();
+        INLINE void set_center(NodePath center);
+        INLINE NodePath& get_center();
 
-	INLINE void set_sea_level(float level);
-	INLINE float get_sea_level() const;
+        INLINE void set_sea_level(float sea_level);
+        INLINE float get_sea_level();
 
-	// LColorf -> typedef for LVecBase4f.
-	INLINE void set_high_color(LColorf color);
-	INLINE LColorf get_high_color() const;
+        INLINE void animate_height(bool animate_height);
+        INLINE bool get_animate_height();
+        INLINE void animate_uv(bool animate_uv);
+        INLINE bool get_animate_uv();
 
-	INLINE void set_low_color(LColorf color);
-	INLINE LColorf get_low_color() const;
+        void set_overall_speed(float speed);
+        INLINE float get_overall_speed();
 
-	INLINE void set_overall_speed(float speed);
-	INLINE float get_overall_speed() const;
+        void set_uv_speed(LVecBase2f uv_speed);
+        INLINE LVecBase2f get_uv_speed();
+        void set_uv_scale(LVecBase2f uv_scale);
+        INLINE LVecBase2f get_uv_scale();
+        LVecBase2f get_uv_offset();
 
-	INLINE void set_uv_speed(LVecBase2f speed);
-	INLINE LVecBase2f get_uv_speed() const;
+        INLINE void set_radius(float radius);
+        INLINE float get_radius();
+        INLINE void set_threshold(float threshold);
+        INLINE float get_threshold();
 
-	INLINE void set_uv_scale(LVecBase2f scale);
-	INLINE LVecBase2f get_uv_scale() const;
+        INLINE void set_low_color(LVecBase4f low_color);
+        INLINE LVecBase4f get_low_color();
+        INLINE void set_high_color(LVecBase4f high_color);
+        INLINE LVecBase4f get_high_color();
+        INLINE LVecBase4f get_mid_color();
 
-	INLINE void set_threshold(float threshold);
-	INLINE float get_threshold() const;
+        INLINE int get_num_waves();
+        INLINE void clear_waves();
+        void allocate_wave(int index);
+        void remove_wave(int index);
+        INLINE void enable_wave(int index);
+        INLINE void disable_wave(int index);
+        INLINE bool is_wave_enabled(int index);
+        INLINE void set_wave_target(int index, SeaPatchRoot::WaveTarget target);
+        INLINE SeaPatchRoot::WaveTarget get_wave_target(int index);
+        INLINE void set_wave_func(int index, SeaPatchRoot::WaveFunction function);
+        INLINE SeaPatchRoot::WaveFunction get_wave_function(int index);
+        INLINE void set_choppy_k(int index, int choppy_k);
+        INLINE int get_choppy_k(int index);
+        INLINE void set_wave_length(int index, float length);
+        INLINE float get_wave_length(int index);
+        INLINE void set_wave_direction(int index, LVecBase2f direction);
+        INLINE LVecBase2f get_wave_direction(int index);
+        INLINE void set_wave_speed(int index, float speed);
+        INLINE float get_wave_speed(int index);
+        INLINE void set_wave_amplitude(int index, float amplitude);
+        INLINE float get_wave_amplitude(int index);
 
-	INLINE void set_radius(float radius);
-	INLINE float get_radius() const;
+        INLINE void set_normal_damper(float normal_damper);
+        INLINE float get_normal_damper();
+        INLINE void set_height_damper(float height_damper);
+        INLINE float get_height_damper();
 
-	// Wave management
-	INLINE void enable_wave(int waveId);
-	INLINE void disable_wave(int waveId);
-	INLINE bool is_wave_enabled(int waveId) const;
-	INLINE int get_num_waves() const;
+        void add_flat_well(const std::string& a2, NodePath& a3, float a4,
+                           float a5, float a6, float a7);
+        void remove_flat_well(const std::string& name);
+        float calc_flat_well_scale(float a2, float a3);
 
-	// Wave properties
-	INLINE void set_wave_amplitude(int waveId, float amplitude);
-	INLINE float get_wave_amplitude(int waveId) const;
-	
-	INLINE void set_wave_length(int waveId, float length);
-	INLINE float get_wave_length(int waveId) const;
-	
-	INLINE void set_wave_speed(int waveId, float speed);
-	INLINE float get_wave_speed(int waveId) const;
-	
-	INLINE void set_wave_direction(int waveId, LVecBase2f dir);
-	INLINE LVecBase2f get_wave_direction(int waveId) const;
-	
-	INLINE void set_choppy_k(int waveId, int choppy);
-	INLINE int get_choppy_k(int waveId) const;
-	
-	INLINE void set_wave_target(int waveId, int target);
-	INLINE int get_wave_target(int waveId) const;
-	
-	INLINE void set_wave_func(int waveId, int func);
-	INLINE int get_wave_func(int waveId) const;
+        float calc_height(float x, float y, float dist2);
+        float calc_filtered_height(float x, float y, float min_length, float dist2);
+        float calc_height_for_mass(float x, float y, float dist2, float mass, float area);
 
-	// Utilities
-	void reset_properties();
-	void assign_environment_from(SeaPatchRoot *other);
-	
-	// Animation
-	INLINE void animate_height(bool flag);
-	INLINE void animate_uv(bool flag);
-	
-	// Height calculation
-	float calc_height(float x, float y, float dist2) const;
-	float calc_filtered_height(float x, float y, float minWaveLength, float dist2) const;
-	float calc_height_for_mass(float x, float y, float dist2, float mass, float area) const;
-	LVector3f calc_normal(float height, float x, float y, float dist2) const;
-	LVector3f calc_normal_for_mass(float height, float x, float y, float dist2, float mass, float area) const;
-	float calc_flat_well_scale(float x, float y) const;
+        LVecBase3f calc_normal(float height, float x, float y, float dist2);
+        LVecBase3f calc_normal_for_mass(float height, float x, float y, float dist2, float mass, float area);
 
-	// Wave enum types
-	enum WaveTarget {
-		WTZ = 0,
-		WTU = 1,
-		WTV = 2
-	};
-	
-	enum WaveFunc {
-		WFSin = 0,
-		WFNoise = 1
-	};
+        void calc_uv(LPoint2f& a2, float a3, float a4, float a5);
+        LVecBase4f calc_color(float a3, float a4, float a5);
 
-private:
-	bool _enabled;
-	LPoint3f _center;
-	NodePath _anchor;
-	float _seaLevel;
-	LColorf _colorHigh;
-	LColorf _colorLow;
-	float _overallSpeed;
-	LVecBase2f _uvSpeed;
-	LVecBase2f _uvScale;
-	float _threshold;
-	float _radius;
-	bool _animate_height;
-	bool _animate_uv;
-	
-	// Wave data (support up to 16 waves)
-	static const int MAX_WAVES = 16;
-	struct WaveData {
-		bool enabled;
-		float amplitude;
-		float length;
-		float speed;
-		LVecBase2f direction;
-		int choppy_k;
-		int target;
-		int func;
-	};
-	WaveData _waves[MAX_WAVES];
-	int _num_waves;
+    private:
+        void compute_amplitude_scale();
+        float get_root_t();
 
-public:
-	void allocate_wave(int waveId);
+        bool m_enabled;
+        bool m_animate_height;
+        bool m_animate_uv;
 
-public:
-	static TypeHandle get_class_type() {
-		return _type_handle;
-	}
-	static void init_type() {
-		TypedReferenceCount::init_type();
-		register_type(_type_handle, "SeaPatchRoot",
-			TypedReferenceCount::get_class_type());
-	}
-	virtual TypeHandle get_type() const {
-		return get_class_type();
-	}
-	virtual TypeHandle force_init_type() { init_type(); return get_class_type(); }
+        float m_sea_level;
+        LVecBase2f m_speed;
+        float m_radius;
+        float m_radius2;
+        float m_threshold;
+        float m_threshold2;
+        float m_normal_damper;
+        float m_height_damper;
+        float m_amplitude_scale;
 
-private:
-	static TypeHandle _type_handle;
+        LVecBase2f m_uv_scale;
+        LVecBase2f m_uv_speed;
+        LVecBase2f m_uv_offset;
+        LVecBase2f m_attr_23;
+
+        NodePath m_anchor;
+        NodePath m_center;
+
+        LVecBase4f m_low_color;
+        LVecBase4f m_mid_color;
+        LVecBase4f m_high_color;
+
+        PerlinNoise3 m_noise;
+
+        typedef struct {
+              bool m_enabled;
+              WaveTarget m_target;
+              WaveFunction m_function;
+              int m_choppy_k;
+              LVecBase2f m_direction;
+              LVecBase2f m_direction_transformed;
+              LVecBase2f m_speed;
+              float m_amplitude;
+              float m_length;
+        } wave_t;
+        std::vector<wave_t> m_waves;
+
+        typedef struct {
+              LPoint3f p;
+              float a;
+              float b;
+              float c;
+        } flat_well_t;
+        std::map<std::string, flat_well_t> m_flat_wells;
+
+    public:
+        static TypeHandle get_class_type() {
+            return _type_handle;
+        }
+        static void init_type() {
+            TypedReferenceCount::init_type();
+            register_type(_type_handle, "SeaPatchRoot", TypedReferenceCount::get_class_type());
+        }
+        virtual TypeHandle get_type() const {
+            return get_class_type();
+        }
+        virtual TypeHandle force_init_type() {
+            init_type();
+            return get_class_type();
+        }
+
+    private:
+        static TypeHandle _type_handle;
 };
 
 #include "seaPatchRoot.I"
 
-#endif
+#endif /* __SEA_PATCH_ROOT_H__ */
