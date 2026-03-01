@@ -116,6 +116,12 @@ used third-party packages:
 sudo apt-get install build-essential pkg-config fakeroot python3-dev libpng-dev libjpeg-dev libtiff-dev zlib1g-dev libssl-dev libx11-dev libgl1-mesa-dev libxrandr-dev libxxf86dga-dev libxcursor-dev bison flex libfreetype6-dev libvorbis-dev libeigen3-dev libopenal-dev libode-dev libbullet-dev nvidia-cg-toolkit libgtk-3-dev libassimp-dev libopenexr-dev
 ```
 
+If you are on Arch Linux, you can use the following command to install the necessary dependencies:
+
+```bash
+sudo pacman -S --needed bison flex gcc python python-pip libpng libjpeg-turbo libtiff zlib openssl libx11 mesa libxrandr libxcursor freetype2 libvorbis eigen3 openal bullet assimp openexr ffmpeg opencv gtk3 pkgconf
+```
+
 Once Panda3D has built, you can either install the .deb or .rpm package that
 is produced, depending on which Linux distribution you are using.  For example,
 to install the package on Debian or Ubuntu, use this:
@@ -128,6 +134,13 @@ If you are not using a Linux distribution that supports .deb or .rpm packages, y
 may have to use the installpanda.py script instead, which will directly copy the
 files into the appropriate locations on your computer.  You may have to run the
 `ldconfig` tool in order to update your library cache after installing Panda3D.
+
+For example, on Arch Linux, you can install the built files to `/usr/local` using:
+
+```bash
+sudo python3 makepanda/installpanda.py --prefix /usr/local
+sudo ldconfig
+```
 
 Alternatively, you can add the `--wheel` option, which will produce a .whl
 file that can be installed into a Python installation using `pip`.
