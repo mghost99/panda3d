@@ -116,10 +116,10 @@ used third-party packages:
 sudo apt-get install build-essential pkg-config fakeroot python3-dev libpng-dev libjpeg-dev libtiff-dev zlib1g-dev libssl-dev libx11-dev libgl1-mesa-dev libxrandr-dev libxxf86dga-dev libxcursor-dev bison flex libfreetype6-dev libvorbis-dev libeigen3-dev libopenal-dev libode-dev libbullet-dev nvidia-cg-toolkit libgtk-3-dev libassimp-dev libopenexr-dev
 ```
 
-If you are on Arch Linux, you can use the following command to install the necessary dependencies:
+If you are on Arch Linux, you can use the following command to install the most frequently used third-party packages:
 
 ```bash
-sudo pacman -S --needed bison flex gcc python python-pip libpng libjpeg-turbo libtiff zlib openssl libx11 mesa libxrandr libxcursor freetype2 libvorbis eigen3 openal bullet assimp openexr ffmpeg opencv gtk3 pkgconf
+sudo pacman -S --needed bison flex gcc python python-pip libpng libjpeg-turbo libtiff zlib openssl libx11 mesa libxrandr libxcursor freetype2 libvorbis eigen3 openal bullet assimp openexr ffmpeg opencv gtk3 pkgconf opusfile ode libsquish mimalloc nvidia-cg-toolkit
 ```
 
 Once Panda3D has built, you can either install the .deb or .rpm package that
