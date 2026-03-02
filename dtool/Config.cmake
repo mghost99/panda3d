@@ -265,7 +265,7 @@ if(BUILD_INTERROGATE)
     panda3d-interrogate
 
     GIT_REPOSITORY https://github.com/panda3d/interrogate.git
-    GIT_TAG ccbd5f9d79037a9d53d6dfb1a5e9fdf30f2510c1
+    GIT_TAG 7cf2550d2c8d95b8c268aa4bb0b5602e85a086dc
 
     PREFIX ${_interrogate_dir}
     CMAKE_ARGS
@@ -358,7 +358,7 @@ mark_as_advanced(SIMULATE_NETWORK_DELAY DO_MEMORY_USAGE DO_DCAST)
 # The following options have to do with the memory allocation system.
 #
 
-find_package(MIMALLOC 1.0 QUIET)
+find_package(MIMALLOC QUIET)
 
 package_option(MIMALLOC
   "The mimalloc allocator.  See also USE_MEMORY_MIMALLOC, which
@@ -424,6 +424,14 @@ else()
 endif()
 
 unset(_prefer_mimalloc)
+
+#
+# Sanitizers
+#
+
+option(ENABLE_ASAN
+  "Enable AddressSanitizer for detecting memory errors such as
+buffer overflows, use-after-free, etc. Requires GCC or Clang." OFF)
 
 #
 # This section relates to mobile-device/phone support and options

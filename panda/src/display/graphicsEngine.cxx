@@ -1145,18 +1145,41 @@ extract_texture_data(Texture *tex, GraphicsStateGuardian *gsg) {
  *
  * This is mainly useful for debugging.  It is a very slow call because it
  * introduces a pipeline stall both of Panda's pipeline and the graphics
- * pipeline.
+ * pipeline.  This is even when only a small amount of data is downloaded.
  *
  * The return value is empty if some kind of error occurred.
  */
 vector_uchar GraphicsEngine::
-extract_shader_buffer_data(ShaderBuffer *buffer, GraphicsStateGuardian *gsg) {
+extract_shader_buffer_data(ShaderBuffer *buffer, GraphicsStateGuardian *gsg,
+                           size_t start, size_t size) {
   return run_on_draw_thread([=] () {
     vector_uchar data;
-    if (!gsg->extract_shader_buffer_data(buffer, data)) {
+    if (!gsg->extract_shader_buffer_data(buffer, data, start, size)) {
       data.clear();
     }
     return data;
+  });
+}
+
+/**
+ * Updates shader buffer data from the CPU.  This may be a subsection of the
+ * buffer.  Returns true on success.
+ *
+ * Updating is only allowed for buffers with usage hint set to UH_dynamic.
+ */
+bool GraphicsEngine::
+update_shader_buffer_data(ShaderBuffer *buffer, GraphicsStateGuardian *gsg,
+                          const vector_uchar &data, size_t offset) {
+  if (buffer->get_usage_hint() != GeomEnums::UH_dynamic) {
+    display_cat.error()
+      << "Cannot update ShaderBuffer with usage hint " << buffer->get_usage_hint() << "\n";
+    return false;
+  }
+
+  const unsigned char *data_ptr = data.data();
+  const size_t data_size = data.size();
+  return run_on_draw_thread([=] () {
+    return gsg->update_shader_buffer_data(buffer, offset, data_size, data_ptr);
   });
 }
 
@@ -1183,6 +1206,7 @@ dispatch_compute(const LVecBase3i &work_groups, const RenderState *state, Graphi
   nassertv(gsg != nullptr);
 
   run_on_draw_thread([=] () {
+    gsg->make_current();
     gsg->push_group_marker(std::string("Compute ") + shader->get_filename(Shader::ST_compute).get_basename());
     gsg->set_state_and_transform(state, TransformState::make_identity());
     gsg->dispatch_compute(work_groups[0], work_groups[1], work_groups[2]);

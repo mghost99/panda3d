@@ -402,6 +402,7 @@ choose_pixel_format(const FrameBufferProperties &properties,
             << ", context_has_pixmap = " << _context_has_pixmap << "\n";
         }
 
+        XFree(configs);
         return;
       }
     }
@@ -412,6 +413,10 @@ choose_pixel_format(const FrameBufferProperties &properties,
     _context = nullptr;
     _visual = nullptr;
     _visuals = nullptr;
+  }
+
+  if (configs != nullptr) {
+    XFree(configs);
   }
 
   glxdisplay_cat.warning()
@@ -427,6 +432,19 @@ choose_pixel_format(const FrameBufferProperties &properties,
 
   // Pbuffers aren't supported at all with the XVisual interface.
   _context_has_pbuffer = false;
+}
+
+/**
+ * Ensures that the context is current.  May return false if the context cannot
+ * be bound without a window.
+ */
+bool glxGraphicsStateGuardian::
+make_current() {
+  if (glXGetCurrentContext() == _context) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -565,6 +583,18 @@ do_get_extension_func(const char *name) {
 
   // Otherwise, fall back to the OS-provided calls.
   return PosixGraphicsStateGuardian::do_get_extension_func(name);
+}
+
+/**
+ * Returns true if this implementation may support Cg shaders.
+ */
+bool glxGraphicsStateGuardian::
+may_support_cg_shaders() {
+#ifdef HAVE_CG
+  return true;
+#else
+  return false;
+#endif
 }
 
 /**

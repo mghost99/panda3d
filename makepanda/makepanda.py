@@ -313,7 +313,7 @@ def parseopts(args):
     if GetTarget() == 'windows':
         if not MSVC_VERSION:
             print("No MSVC version specified. Defaulting to 14.1 (Visual Studio 2017).")
-            MSVC_VERSION = (14, 1)
+            MSVC_VERSION = (14, 3)
         else:
             try:
                 MSVC_VERSION = tuple(int(d) for d in MSVC_VERSION.split('.'))[:2]
@@ -752,6 +752,7 @@ if (COMPILER == "MSVC"):
         if not os.path.isfile(GetThirdpartyDir() + "openal/bin/OpenAL32.dll"):
             # Link OpenAL Soft statically.
             DefSymbol("OPENAL", "AL_LIBTYPE_STATIC")
+            LibName("OPENAL", "avrt.lib")
     if (PkgSkip("ODE")==0):
         LibName("ODE",      GetThirdpartyDir() + "ode/lib/ode_single.lib")
         DefSymbol("ODE",    "dSINGLE", "")
@@ -1077,7 +1078,6 @@ if (COMPILER=="GCC"):
         LibName("ALWAYS", "-framework AppKit")
         LibName("IOKIT", "-framework IOKit")
         LibName("QUARTZ", "-framework Quartz")
-        LibName("AGL", "-framework AGL")
         LibName("CARBON", "-framework Carbon")
         LibName("COCOA", "-framework Cocoa")
         # Fix for a bug in OSX Leopard:
@@ -1434,7 +1434,7 @@ def CompileCxx(obj,src,opts):
                 if optlevel >= 4 or target == "android":
                     cmd += " -fno-rtti"
 
-        if ('SSE2' in opts or not PkgSkip("SSE2")) and not arch.startswith("arm") and arch != 'aarch64':
+        if ('SSE2' in opts or not PkgSkip("SSE2")) and arch.find('86') > 0:
             if GetTarget() != "emscripten":
                 cmd += " -msse2"
 
@@ -4981,13 +4981,17 @@ if GetTarget() == 'android':
     TargetAdd('org/panda3d/android/NativeOStream.class', opts=OPTS, input='NativeOStream.java')
     TargetAdd('org/panda3d/android/PandaActivity.class', opts=OPTS, input='PandaActivity.java')
     TargetAdd('org/panda3d/android/PandaActivity$1.class', opts=OPTS+['DEPENDENCYONLY'], input='PandaActivity.java')
+    TargetAdd('org/panda3d/android/PandaActivity$2.class', opts=OPTS+['DEPENDENCYONLY'], input='PandaActivity.java')
     TargetAdd('org/panda3d/android/PythonActivity.class', opts=OPTS, input='PythonActivity.java')
+    TargetAdd('org/panda3d/android/PythonActivity$ActivityResultListener.class', opts=OPTS+['DEPENDENCYONLY'], input='PythonActivity.java')
 
     TargetAdd('classes.dex', input='org/panda3d/android/NativeIStream.class')
     TargetAdd('classes.dex', input='org/panda3d/android/NativeOStream.class')
     TargetAdd('classes.dex', input='org/panda3d/android/PandaActivity.class')
     TargetAdd('classes.dex', input='org/panda3d/android/PandaActivity$1.class')
+    TargetAdd('classes.dex', input='org/panda3d/android/PandaActivity$2.class')
     TargetAdd('classes.dex', input='org/panda3d/android/PythonActivity.class')
+    TargetAdd('classes.dex', input='org/panda3d/android/PythonActivity$ActivityResultListener.class')
 
     TargetAdd('p3android_composite1.obj', opts=OPTS, input='p3android_composite1.cxx')
     TargetAdd('libp3android.dll', input='p3android_composite1.obj')
@@ -5520,6 +5524,19 @@ if not PkgSkip("PANDATOOL") and not PkgSkip("DNA"):
   TargetAdd('dna-trans.exe', input=COMMON_PANDA_LIBS)
   TargetAdd('dna-trans.exe', input='libp3toontown.dll')
   TargetAdd('dna-trans.exe', opts=['ADVAPI'])
+
+#
+# DIRECTORY: pandatool/src/converter/
+#
+
+if not PkgSkip("PANDATOOL"):
+    OPTS=['DIR:pandatool/src/converter']
+    TargetAdd('txo-converter_txoConverter.obj', opts=OPTS, input='txoConverter.cxx')
+    TargetAdd('txo-converter.exe', input='txo-converter_txoConverter.obj')
+    TargetAdd('txo-converter.exe', input='libp3progbase.lib')
+    TargetAdd('txo-converter.exe', input='libp3pandatoolbase.lib')
+    TargetAdd('txo-converter.exe', input=COMMON_PANDA_LIBS)
+    TargetAdd('txo-converter.exe', opts=['ADVAPI', 'FFTW'])
 
 #
 # DIRECTORY: pandatool/src/daeegg/

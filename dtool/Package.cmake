@@ -97,6 +97,7 @@ if(THIRDPARTY_DIRECTORY)
     HarfBuzz
     JPEG
     LibSquish
+    MIMALLOC
     ODE
     Ogg
     OpenAL
@@ -106,6 +107,7 @@ if(THIRDPARTY_DIRECTORY)
     PNG
     SWResample
     SWScale
+    Tiff
     TIFF
     VorbisFile
     VRPN

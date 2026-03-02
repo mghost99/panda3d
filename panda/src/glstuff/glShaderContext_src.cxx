@@ -413,7 +413,8 @@ CLP(ShaderContext)(CLP(GraphicsStateGuardian) *glgsg, Shader *s) : ShaderContext
   _glgsg->report_my_gl_errors();
 
   // Restore the active shader.
-  if (_glgsg->_current_shader_context == nullptr) {
+  if (_glgsg->_current_shader_context == nullptr ||
+      !_glgsg->_current_shader_context->valid()) {
     _glgsg->_glUseProgram(0);
   } else {
     _glgsg->_current_shader_context->bind(_glgsg);
@@ -1043,14 +1044,18 @@ reflect_uniform(int i, char *name_buffer, GLsizei name_buflen) {
         else if (noprefix.compare(7, string::npos, "Height") == 0) {
           bind._part = Shader::STO_stage_height_i;
         }
-        else if (noprefix.compare(7, string::npos, "Selector") == 0) {
-          bind._part = Shader::STO_stage_selector_i;
+        else if (noprefix.compare(7, string::npos, "MetallicRoughness") == 0 ||
+                 noprefix.compare(7, string::npos, "Selector") == 0) {
+          bind._part = Shader::STO_stage_metallic_roughness_i;
         }
         else if (noprefix.compare(7, string::npos, "Gloss") == 0) {
           bind._part = Shader::STO_stage_gloss_i;
         }
         else if (noprefix.compare(7, string::npos, "Emission") == 0) {
           bind._part = Shader::STO_stage_emission_i;
+        }
+        else if (noprefix.compare(7, string::npos, "Occlusion") == 0) {
+          bind._part = Shader::STO_stage_occlusion_i;
         }
         else {
           GLCAT.error()
@@ -2181,7 +2186,7 @@ release_resources() {
  */
 bool CLP(ShaderContext)::
 valid() {
-  if (_shader->get_error_flag()) {
+  if (_shader == nullptr || _shader->get_error_flag()) {
     return false;
   }
   return (_glsl_program != 0);
@@ -2193,6 +2198,8 @@ valid() {
  */
 void CLP(ShaderContext)::
 bind(GraphicsStateGuardian *gsg) {
+  nassertv(_shader != nullptr);
+
   CLP(GraphicsStateGuardian) *glgsg = (CLP(GraphicsStateGuardian) *)gsg;
   _glgsg = glgsg;
 
@@ -3310,6 +3317,9 @@ glsl_compile_and_link() {
   _glsl_shaders.clear();
   _glsl_program = _glgsg->_glCreateProgram();
   if (!_glsl_program) {
+    // If this happens, check whether you have a current GL context
+    GLCAT.error()
+      << "Failed to create GLSL program object\n";
     return false;
   }
 
