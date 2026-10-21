@@ -1070,6 +1070,16 @@ make_output(std::string_view name,
         (flags & BF_can_bind_layered) != 0) {
       return nullptr;
     }
+#if defined(HAVE_X11) && !defined(HAVE_COCOA) && !defined(_WIN32)
+    if (_display == nullptr) {
+      // x11GraphicsPipe could not open the X display; creating a window would
+      // dereference a null Display (crash in XkbSetDetectableAutoRepeat).
+      vulkandisplay_cat.error()
+        << "Cannot open a Vulkan window: no X11 display connection "
+           "(check DISPLAY / XAUTHORITY).\n";
+      return nullptr;
+    }
+#endif
     return new VulkanGraphicsWindow(engine, this, std::string(name), fb_prop, win_prop,
                                     flags, gsg, host);
   }
