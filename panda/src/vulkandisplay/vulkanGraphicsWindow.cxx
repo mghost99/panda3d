@@ -14,6 +14,7 @@
 #include <chrono>
 #include "vulkanGraphicsWindow.h"
 #include "vulkanGraphicsStateGuardian.h"
+#include "graphicsEngine.h"
 
 #ifdef HAVE_COCOA
 #include "config_cocoadisplay.h"
@@ -73,19 +74,23 @@ begin_frame(FrameMode mode, Thread *current_thread) {
     return false;
   }
 
-  if (!get_unexposed_draw() && !_got_expose_event) {
-    if (vulkandisplay_cat.is_spam()) {
-      vulkandisplay_cat.spam()
-        << "Not drawing " << this << ": unexposed.\n";
+  // A refresh (screenshot readback) only reads an already rendered image, so
+  // it doesn't need to wait for an expose / pending ConfigureNotify.
+  if (mode != FM_refresh) {
+    if (!get_unexposed_draw() && !_got_expose_event) {
+      if (vulkandisplay_cat.is_spam()) {
+        vulkandisplay_cat.spam()
+          << "Not drawing " << this << ": unexposed.\n";
+      }
+      return false;
     }
-    return false;
-  }
 
 #ifdef HAVE_X11
-  if (_awaiting_configure_since != -1) {
-    return false;
-  }
+    if (_awaiting_configure_since != -1) {
+      return false;
+    }
 #endif
+  }
 
   if (vulkandisplay_cat.is_spam()) {
     vulkandisplay_cat.spam()
@@ -113,8 +118,9 @@ begin_frame(FrameMode mode, Thread *current_thread) {
     return false;
   }
 
-  if (_swapchain_size != _size) {
-    // Uh-oh, the window must have resized.  Recreate the swapchain.
+  if (_swapchain_size != _size && mode != FM_refresh) {
+    // Uh-oh, the window must have resized.  Recreate the swapchain.  (Not for
+    // a refresh: that would throw away the frame we are asked to read back.)
     // Before destroying the old, make sure the queue is no longer rendering
     // anything to it.
     vkQueueWaitIdle(vkgsg->_queue);
@@ -142,13 +148,31 @@ begin_frame(FrameMode mode, Thread *current_thread) {
     // whatever framebuffer happened to be bound last, which is wrong after an
     // offscreen buffer was drawn and unset before the window's first frame
     // (e.g. on the draw thread with threading-model Cull/Draw).
-    if (_last_rendered_index >= 0 &&
-        (size_t)_last_rendered_index < _swap_buffers.size()) {
-      vkgsg->_fb_color_tc = _swap_buffers[_last_rendered_index]._tc;
-      vkgsg->_fb_depth_tc = _depth_stencil_tc;
-    } else {
-      vkgsg->_fb_color_tc = nullptr;
-      vkgsg->_fb_depth_tc = nullptr;
+    //
+    // Spec rule: an image handed to vkQueuePresentKHR may not be accessed
+    // until it is acquired again.  So read the swapchain image only while it
+    // is rendered but not yet presented (the usual case: Panda flips at the
+    // start of the next render_frame); otherwise use the kept copy.
+    vkgsg->_fb_color_tc = nullptr;
+    vkgsg->_fb_depth_tc = _depth_stencil_tc;
+    if (_flip_ready && _last_rendered_index == (int)_image_index &&
+        (size_t)_image_index < _swap_buffers.size()) {
+      vkgsg->_fb_color_tc = _swap_buffers[_image_index]._tc;
+    } else if (_last_frame_tc != nullptr && _last_frame_valid) {
+      vkgsg->_fb_color_tc = _last_frame_tc;
+    }
+    if (vulkandisplay_cat.is_debug()) {
+      vulkandisplay_cat.debug()
+        << "FM_refresh: flip_ready=" << _flip_ready << " last_rendered="
+        << _last_rendered_index << " image=" << _image_index << " kept="
+        << (_last_frame_tc != nullptr) << "/" << _last_frame_valid
+        << " -> " << (vkgsg->_fb_color_tc == _last_frame_tc ? "kept copy" : "swapchain image") << "\n";
+    } else if (_last_rendered_index >= 0 && !_keep_last_frame) {
+      // Too late for this one; keep a copy of every frame from now on.
+      vulkandisplay_cat.info()
+        << "Screenshot requested after present; keeping a copy of the last "
+           "frame from now on (vulkan-keep-last-frame)\n";
+      _keep_last_frame = true;
     }
     return true;
   }
@@ -216,6 +240,35 @@ end_frame(FrameMode mode, Thread *current_thread) {
 
     signal_done = buffer._render_complete;
     _last_rendered_index = (int)_image_index;
+
+    if (needs_last_frame_copy()) {
+      if (_last_frame_tc == nullptr) {
+        VkExtent3D extent = {(uint32_t)_swapchain_size[0], (uint32_t)_swapchain_size[1], 1};
+        _last_frame_tc = vkgsg->create_attachment(
+          _surface_format.format, extent, VK_IMAGE_ASPECT_COLOR_BIT,
+          VK_SAMPLE_COUNT_1_BIT,
+          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, // (any view-capable usage)
+          get_name() + ":last-frame");
+      }
+      if (_last_frame_tc != nullptr) {
+        VulkanCommandBuffer &cmd = vkgsg->_render_cmd;
+        cmd.add_barrier(buffer._tc, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        cmd.add_barrier(_last_frame_tc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        cmd.flush_barriers();
+        VkImageCopy region = {};
+        region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.layerCount = 1;
+        region.dstSubresource = region.srcSubresource;
+        region.extent = _last_frame_tc->_extent;
+        vkCmdCopyImage(cmd, buffer._tc->_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       _last_frame_tc->_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1, &region);
+        _last_frame_valid = true;
+      }
+    }
 
     // If we copied the textures, transition it back to the present state.
     //if (buffer._tc->_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
@@ -598,6 +651,12 @@ destroy_swapchain() {
   VkDevice device = vkgsg->_device;
 
   _last_rendered_index = -1;
+  _last_frame_valid = false;
+  if (_last_frame_tc != nullptr) {
+    _last_frame_tc->destroy_now(device);
+    delete _last_frame_tc;
+    _last_frame_tc = nullptr;
+  }
 
   // An acquire semaphore left over from an end_flip() whose acquire failed
   // (swapchain out of date, e.g. after a resize) would otherwise be
@@ -895,4 +954,14 @@ create_swapchain() {
   }
 
   return true;
+}
+
+/**
+ * Returns true if every rendered frame should also be copied to
+ * _last_frame_tc, so that a screenshot can be taken after presenting.
+ */
+bool VulkanGraphicsWindow::
+needs_last_frame_copy() const {
+  return _keep_last_frame || vulkan_keep_last_frame ||
+         (_engine != nullptr && _engine->get_auto_flip());
 }

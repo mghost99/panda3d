@@ -84,6 +84,12 @@ private:
   uint32_t _image_index = 0;
   // Swapchain image that holds the most recently rendered frame (-1: none).
   int _last_rendered_index = -1;
+  // Copy of the last rendered frame, kept when screenshots may be requested
+  // after the image was already presented (auto-flip, vulkan-keep-last-frame).
+  VulkanTextureContext *_last_frame_tc = nullptr;
+  bool _last_frame_valid = false;
+  bool _keep_last_frame = false;
+  bool needs_last_frame_copy() const;
 
   VulkanTextureContext *_ms_color_tc = nullptr;
   VulkanTextureContext *_depth_stencil_tc = nullptr;

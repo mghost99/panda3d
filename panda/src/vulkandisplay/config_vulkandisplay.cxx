@@ -104,6 +104,15 @@ ConfigVariableInt vulkan_frame_stats
 
 VulkanFrameStats vulkan_stats;
 
+ConfigVariableBool vulkan_keep_last_frame
+("vulkan-keep-last-frame", false,
+ PRC_DESC("Keep a GPU copy of each window's last rendered frame so that "
+          "screenshots work even after the swapchain image was presented "
+          "(reading a presented image is not allowed).  This is enabled "
+          "automatically with auto-flip, or after the first screenshot that "
+          "arrives too late; normally screenshots read the rendered image "
+          "before it is presented and need no copy."));
+
 ConfigVariableBool vulkan_recycle_semaphores
 ("vulkan-recycle-semaphores", true,
  PRC_DESC("Reuse the per-frame swapchain acquire semaphores once the frame "

@@ -35,6 +35,7 @@ extern ConfigVariableString vulkan_present_mode;
 extern ConfigVariableInt vulkan_swapchain_images;
 extern ConfigVariableInt vulkan_frame_stats;
 extern ConfigVariableBool vulkan_recycle_semaphores;
+extern ConfigVariableBool vulkan_keep_last_frame;
 
 // Lightweight per-interval counters, printed every vulkan-frame-stats frames.
 struct VulkanFrameStats {
