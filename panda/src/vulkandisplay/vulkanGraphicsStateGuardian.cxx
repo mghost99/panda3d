@@ -21,6 +21,11 @@
 #include "pStatGPUTimer.h"
 #include "standardMunger.h"
 #include "shaderModuleSpirV.h"
+#include "bamCache.h"
+#include "trueClock.h"
+#include <fstream>
+#include <sstream>
+#include "virtualFileSystem.h"
 
 #include "colorAttrib.h"
 #include "colorBlendAttrib.h"
@@ -445,7 +450,53 @@ reset() {
   cache_info.initialDataSize = 0;
   cache_info.pInitialData = nullptr;
 
+  // Load a previously saved pipeline cache from disk, if any.  The header is
+  // validated against this device so a cache from another GPU/driver is
+  // ignored rather than handed to the driver.
+  std::string cache_blob;
+  if (vulkan_persist_pipeline_cache) {
+    _pipeline_cache_filename = vulkan_pipeline_cache_file.get_value();
+    if (_pipeline_cache_filename.empty()) {
+      BamCache *bam_cache = BamCache::get_global_ptr();
+      if (bam_cache->get_active() && !bam_cache->get_root().empty()) {
+        _pipeline_cache_filename = Filename(bam_cache->get_root(), "vulkan-pipeline-cache.bin");
+      }
+    }
+  }
+  if (!_pipeline_cache_filename.empty()) {
+    _pipeline_cache_filename.set_binary();
+    std::ifstream in;
+    if (_pipeline_cache_filename.open_read(in)) {
+      std::ostringstream ss;
+      ss << in.rdbuf();
+      cache_blob = ss.str();
+      const VkPipelineCacheHeaderVersionOne *hdr = (const VkPipelineCacheHeaderVersionOne *)cache_blob.data();
+      if (cache_blob.size() < sizeof(VkPipelineCacheHeaderVersionOne) ||
+          hdr->headerVersion != VK_PIPELINE_CACHE_HEADER_VERSION_ONE ||
+          hdr->vendorID != pipe->_gpu_properties.vendorID ||
+          hdr->deviceID != pipe->_gpu_properties.deviceID ||
+          memcmp(hdr->pipelineCacheUUID, pipe->_gpu_properties.pipelineCacheUUID, VK_UUID_SIZE) != 0) {
+        vulkandisplay_cat.info()
+          << "Ignoring stale Vulkan pipeline cache " << _pipeline_cache_filename << "\n";
+        cache_blob.clear();
+      } else {
+        cache_info.initialDataSize = cache_blob.size();
+        cache_info.pInitialData = cache_blob.data();
+        _pipeline_cache_loaded_size = cache_blob.size();
+        vulkandisplay_cat.info()
+          << "Loaded " << cache_blob.size() << " bytes of Vulkan pipeline cache from "
+          << _pipeline_cache_filename << "\n";
+      }
+    }
+  }
+
   err = vkCreatePipelineCache(_device, &cache_info, nullptr, &_pipeline_cache);
+  if (err && cache_info.pInitialData != nullptr) {
+    cache_info.initialDataSize = 0;
+    cache_info.pInitialData = nullptr;
+    _pipeline_cache_loaded_size = 0;
+    err = vkCreatePipelineCache(_device, &cache_info, nullptr, &_pipeline_cache);
+  }
   if (err) {
     // This isn't a fatal error, since we don't strictly need the cache.
     vulkan_error(err, "Failed to create pipeline cache");
@@ -918,6 +969,7 @@ destroy_device() {
   vkDestroyDescriptorSetLayout(_device, _lattr_descriptor_set_layout, nullptr);
   vkDestroyDescriptorPool(_device, _descriptor_pool, nullptr);
   vkDestroySampler(_device, _shadow_sampler, nullptr);
+  save_pipeline_cache();
   vkDestroyPipelineCache(_device, _pipeline_cache, nullptr);
   vkDestroyCommandPool(_device, _cmd_pool, nullptr);
 
@@ -959,6 +1011,16 @@ close_gsg() {
 
   // Make sure it's no longer doing anything before we destroy it.
   vkDeviceWaitIdle(_device);
+
+  if (vulkandisplay_cat.is_info()) {
+    vulkandisplay_cat.info()
+      << "Created " << _num_pipelines_created << " graphics pipelines in "
+      << (_pipeline_create_time * 1000.0) << " ms total\n";
+  }
+
+  // Persist any newly compiled pipelines now; the GSG destructor may never
+  // run if the application exits without tearing down the engine.
+  save_pipeline_cache();
 
   // Call finish_frame() on all frames.  We don't need to wait on the
   // semaphore due to the above call.
@@ -5841,7 +5903,10 @@ make_pipeline(VulkanShaderContext *sc,
 
   VkResult err;
   VkPipeline pipeline;
+  double pipeline_t0 = TrueClock::get_global_ptr()->get_short_time();
   err = vkCreateGraphicsPipelines(_device, _pipeline_cache, 1, &pipeline_info, nullptr, &pipeline);
+  _num_pipelines_created++;
+  _pipeline_create_time += TrueClock::get_global_ptr()->get_short_time() - pipeline_t0;
   if (err) {
     vulkan_error(err, "Failed to create graphics pipeline");
     return VK_NULL_HANDLE;
@@ -6793,4 +6858,54 @@ lookup_image_format(VkFormat vk_format, Texture::Format &format,
     return false;
   }
   return true;
+}
+
+/**
+ * Writes the contents of the pipeline cache to disk, so that the next run can
+ * skip pipeline compilation.  Called before the cache is destroyed.
+ */
+void VulkanGraphicsStateGuardian::
+save_pipeline_cache() {
+  if (_pipeline_cache == VK_NULL_HANDLE || _pipeline_cache_filename.empty()) {
+    return;
+  }
+  size_t size = 0;
+  if (vkGetPipelineCacheData(_device, _pipeline_cache, &size, nullptr) != VK_SUCCESS || size == 0) {
+    return;
+  }
+  if (size == _pipeline_cache_loaded_size) {
+    // Most likely nothing new was compiled; don't rewrite the file.
+    return;
+  }
+  std::string data(size, '\0');
+  if (vkGetPipelineCacheData(_device, _pipeline_cache, &size, &data[0]) != VK_SUCCESS) {
+    return;
+  }
+  data.resize(size);
+
+  // Write to a temporary file and rename, so that a crash or a concurrent
+  // process never leaves a truncated cache behind.
+  Filename tmp = Filename::binary_filename(_pipeline_cache_filename.get_fullpath() + ".tmp");
+  Filename dir(_pipeline_cache_filename.get_dirname());
+  if (!dir.empty()) {
+    dir.make_dir();
+  }
+  std::ofstream out;
+  if (!tmp.open_write(out, true)) {
+    vulkandisplay_cat.warning()
+      << "Could not write Vulkan pipeline cache to " << tmp << "\n";
+    return;
+  }
+  out.write(data.data(), data.size());
+  out.close();
+  if (!tmp.rename_to(_pipeline_cache_filename)) {
+    tmp.unlink();
+    return;
+  }
+  _pipeline_cache_loaded_size = size;
+  if (vulkandisplay_cat.is_info()) {
+    vulkandisplay_cat.info()
+      << "Saved " << size << " bytes of Vulkan pipeline cache to "
+      << _pipeline_cache_filename << "\n";
+  }
 }

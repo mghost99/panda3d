@@ -18,6 +18,7 @@
 #include "notifyCategoryProxy.h"
 #include "configVariableBool.h"
 #include "configVariableInt64.h"
+#include "configVariableFilename.h"
 
 NotifyCategoryDecl(vulkandisplay, EXPCL_VULKANDISPLAY, EXPTP_VULKANDISPLAY);
 
@@ -25,6 +26,8 @@ extern ConfigVariableInt64 vulkan_memory_page_size;
 extern ConfigVariableInt64 vulkan_global_uniform_buffer_size;
 extern ConfigVariableInt64 vulkan_staging_buffer_size;
 extern ConfigVariableBool vulkan_support_custom_border_color;
+extern ConfigVariableFilename vulkan_pipeline_cache_file;
+extern ConfigVariableBool vulkan_persist_pipeline_cache;
 
 extern EXPCL_VULKANDISPLAY void init_libvulkandisplay();
 extern "C" EXPCL_VULKANDISPLAY int get_pipe_type_p3vulkandisplay();

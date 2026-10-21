@@ -62,6 +62,19 @@ ConfigVariableInt64 vulkan_staging_buffer_size
           "buffer instead.  Set this to 0 to create separate staging buffers "
           "for all uploads."));
 
+ConfigVariableFilename vulkan_pipeline_cache_file
+("vulkan-pipeline-cache-file", "",
+ PRC_DESC("If set, the Vulkan pipeline cache is loaded from this file when the "
+          "graphics device is created and written back when it is closed, so "
+          "that pipelines do not need to be recompiled on the next run.  If "
+          "this is left empty, a file named vulkan-pipeline-cache.bin inside "
+          "model-cache-dir is used (when the model cache is active).  Set "
+          "vulkan-persist-pipeline-cache to false to disable this."));
+
+ConfigVariableBool vulkan_persist_pipeline_cache
+("vulkan-persist-pipeline-cache", true,
+ PRC_DESC("Set this false to disable saving the Vulkan pipeline cache to disk."));
+
 ConfigVariableBool vulkan_support_custom_border_color
 ("vulkan-support-custom-border-color", true,
  PRC_DESC("If this is set to true, and this is supported by the video card, "

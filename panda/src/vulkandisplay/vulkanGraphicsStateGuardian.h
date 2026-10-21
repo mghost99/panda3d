@@ -278,6 +278,11 @@ private:
   VkCommandPool _cmd_pool = VK_NULL_HANDLE;
   pvector<VkRect2D> _viewports;
   VkPipelineCache _pipeline_cache = VK_NULL_HANDLE;
+  Filename _pipeline_cache_filename;
+  size_t _pipeline_cache_loaded_size = 0;
+  size_t _num_pipelines_created = 0;
+  double _pipeline_create_time = 0.0;
+  void save_pipeline_cache();
   VkDescriptorPool _descriptor_pool = VK_NULL_HANDLE;
   VulkanShaderContext *_default_sc = nullptr;
   Shader *_current_shader = nullptr;
