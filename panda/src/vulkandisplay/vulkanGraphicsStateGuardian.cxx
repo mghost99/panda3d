@@ -6886,10 +6886,8 @@ save_pipeline_cache() {
   // Write to a temporary file and rename, so that a crash or a concurrent
   // process never leaves a truncated cache behind.
   Filename tmp = Filename::binary_filename(_pipeline_cache_filename.get_fullpath() + ".tmp");
-  Filename dir(_pipeline_cache_filename.get_dirname());
-  if (!dir.empty()) {
-    dir.make_dir();
-  }
+  // make_dir() creates the directories leading up to the file.
+  Filename(_pipeline_cache_filename).make_dir();
   std::ofstream out;
   if (!tmp.open_write(out, true)) {
     vulkandisplay_cat.warning()
