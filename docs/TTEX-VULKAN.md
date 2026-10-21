@@ -19,8 +19,22 @@ Add this to a prc page loaded **after** `config/dev.prc` (dev.prc sets `load-dis
 
 ```
 load-display p3vulkandisplay
-sync-video #f          # uses MAILBOX present mode when available
+sync-video #f          # uncapped: MAILBOX if available, else IMMEDIATE, >=4 swapchain images
 ```
+
+Optional Vulkan knobs:
+
+| prc | default | |
+|---|---|---|
+| `vulkan-present-mode` | `auto` | `fifo`, `fifo-relaxed`, `mailbox`, `immediate`; unsupported falls back to fifo |
+| `vulkan-swapchain-images` | `0` (auto) | auto = 1 + back-buffers, at least 4 when uncapped |
+| `vulkan-validation` | `#f` | enable `VK_LAYER_KHRONOS_validation` (install `vulkan-validation-layers`); slow |
+| `vulkan-frame-stats` | `0` | every N frames log uploads/allocs/descriptor allocs and fence/acquire/present waits (needs `notify-level-vulkandisplay info`) |
+| `vulkan-recycle-semaphores` | `#t` | reuse per-frame acquire semaphores |
+
+The chosen present mode and image count are logged at info level
+(`Swapchain 1280x720 present mode immediate, 4 images requested ...`). On
+NVIDIA/Xwayland the surface offers no MAILBOX, so uncapped means IMMEDIATE.
 
 There's no `aux-display` fallback, so a broken Vulkan setup fails loudly
 instead of silently going back to GL.
@@ -31,8 +45,9 @@ With the wrong display you now get
 `Cannot open a Vulkan window: no X11 display connection (check DISPLAY / XAUTHORITY)`
 and "Could not open window" instead of a segfault.
 
-Leave `threading-model` at its default (single-threaded). `Cull/Draw` hangs
-while opening the Vulkan window (see limitations).
+`threading-model Cull/Draw` works on Vulkan (and is faster, see below); the
+default single-threaded model is still what the measurements in the main
+table use.
 
 ## Custom shaders
 
@@ -98,23 +113,43 @@ Planned launcher flow:
 
 Deterministic QA hook: the toon is placed at a fixed TTC spot, frames are
 timed for 15 s, then the tunnel trigger takes it to street 2226 and the
-measurement is repeated. The two series alternated Vulkan and GL runs. GL ran
-on the NVIDIA GPU (`__NV_PRIME_RENDER_OFFLOAD=1
+measurement is repeated. Runs alternate Vulkan and GL, one client at a time.
+GL ran on the NVIDIA GPU (`__NV_PRIME_RENDER_OFFLOAD=1
 __GLX_VENDOR_LIBRARY_NAME=nvidia __GL_SYNC_TO_VBLANK=0`; renderer string
-checked every run). Run-to-run noise is about 10%, and another build job was
-sharing the CPU (load average 3-4).
+checked every run). Run-to-run noise is about 10% (more on the street, where
+cogs walk through the view).
 
-| Scene | Run | Vulkan avg / 1% low fps | GL avg / 1% low fps |
+Before/after the VULKAN3 fixes (single-threaded, avg fps / 1% low fps / p99 ms):
+
+| Scene | Vulkan before (3 swapchain imgs) | Vulkan after, series 1 / 2 | GL, series 1 / 2 |
 |---|---|---|---|
-| TTC playground | series 1 | 291 / 123 | 272 / 144 |
-| TTC playground | series 2 | 289 / 97 | 284 / 167 |
-| Street 2226 | series 1 | 274 / 104 | 206 / 132 |
-| Street 2226 | series 2 | 244 / 104 | 206 / 115 |
+| TTC playground | 289-300 / 93-123 / 9.8-10.2 | 327 / 198 / 4.57 ; 331 / 195 / 4.55 | 294 / 165 / 4.98 ; 296 / 173 / 4.89 |
+| Street 2226 | 244-280 / 94-104 / 8.1-9.6 | 324 / 195 / 4.70 ; 244 / 147 / 5.80 | 222 / 131 / 6.45 ; 220 / 120 / 6.98 |
 
-Vulkan has higher average fps, especially on streets (+18-33%), but worse
-1% lows (Vulkan p99 8-9 ms vs GL 5-7 ms). Frames are CPU-bound in Panda's
-cull traversal and Python game code. The backend's own state/draw setup costs
-about the same on both (~5% of samples each, py-spy).
+Vulkan now beats GL on average fps, 1% lows and p99 in both scenes.
+
+Cause of the old bad 1% lows: in IMMEDIATE mode with 3 swapchain images,
+`vkAcquireNextImageKHR` blocked for ~6 ms in bursts of every 3rd frame about
+twice a second (PStats: all of the extra time in the spike frames was
+`Wait:Flip`, with no child collectors). Requesting 4 images removes it (5 is no
+better). Fence waits, descriptor-set allocation (~11 cached sets/frame),
+semaphore creation (~1 us) and buffer uploads were measured with
+`vulkan-frame-stats` and were all negligible.
+
+Cog battle (street 2226, toon teleported onto the nearest free cog, 12 s
+measured from 4 s after the place enters `battle`; different cog each run):
+
+| Run | avg fps | 1% low | p99 ms |
+|---|---|---|---|
+| Vulkan 1 | 386 | 158 | 4.29 |
+| GL 1 | 377 | 162 | 4.55 |
+| Vulkan 2 | 454 | 174 | 4.80 |
+| GL 2 | 476 | 150 | 4.84 |
+
+Battle is roughly a tie (within noise); the scene is light.
+
+`threading-model Cull/Draw` (one run each): Vulkan TTC 416 / 206 / 3.70,
+street 358 / 196 / 4.27; GL TTC 448 / 195 / 4.22, street 253 / 104 / 9.05.
 
 Startup to the toon picker is the same on both renderers: ~5.4 s warm,
 ~21 s fully cold. The cold time is Python bytecode, the model cache and disk,
@@ -127,18 +162,47 @@ pipelines (render states), which the pipeline cache covers. The
 generated-shader cache matters for `setShaderAuto`, `CommonFilters` /
 string-made shaders, and future custom shaders.
 
+## Validation
+
+Run with `vulkan-validation #t` (Arch: `vulkan-validation-layers`). A full
+TTEX session (picker, TTC, screenshot, street, exit) is clean, in both
+single-threaded and `Cull/Draw` mode. Errors found and fixed this way:
+
+| VUID | Cause | Fix |
+|---|---|---|
+| `vkCmdDraw*-dynamicRenderingUnusedAttachments-08917` | `framebuffer-stencil #t` gives a D24S8 attachment but the pipeline had `stencilAttachmentFormat` UNDEFINED | set stencil format for combined depth/stencil |
+| `VkPresentInfoKHR-pImageIndices-01430` | screenshot left the presented swapchain image in TRANSFER_SRC | restore PRESENT_SRC after the readback |
+| `vkDestroyDevice-device-05137` (VkSemaphore) | acquire semaphore of a failed (out-of-date) acquire overwritten on swapchain recreate | destroy it in `destroy_swapchain()` |
+| `VkBufferCreateInfo-size-00912`, `vkCmdCopyBuffer-size-00116/-dstOffset-00114`, `vkCmdBindVertexBuffers-pOffsets-00626`, `vkCmdDrawIndexed-robustBufferAccess2-08798` (Cull/Draw) | vertex/index buffers sized at prepare time and never regrown; empty arrays made 0-byte buffers | regrow on size change, minimum 16 bytes |
+
+## Hangs fixed
+
+* **FM_refresh / open_windows hang** (the one rdb's reverted "skip
+  FM_refresh" patch targeted): the GSG has a 40-entry command-buffer pool;
+  when one frame needed more (many offscreen buffers, or `make_contexts()`
+  doing FM_refresh on every window), `create_command_buffer()` waited for
+  the oldest frame, which was the unsubmitted current frame, forever. Now it
+  only waits for submitted frames and otherwise grows the pool. FM_refresh
+  still does real work, so `saveScreenshot` keeps working. Repro:
+  `samples/ttex-vulkan/refresh_repro.py` (N offscreen buffers + openWindows + renderFrame +
+  saveScreenshot) hung at buffer 39, now fine with N=100.
+* **Cull/Draw hang**: `DisplayRegion::get_screenshot()` deadlocked with any
+  separate draw thread (GL too): the callback run on the draw thread re-entered
+  `get_screenshot()`, failed the pipeline-stage check (run_on_thread lends the
+  caller's stage) and called `run_on_draw_thread()` again, blocking on the
+  engine lock. Plus the Vulkan window screenshot used the GSG's last-bound
+  framebuffer (null on the draw thread) instead of the window's last rendered
+  swapchain image.
+
 ## Known limitations / TODO
 
-* `threading-model Cull/Draw` hangs while opening a Vulkan window. Window
-  creation/swapchain isn't safe yet on the draw thread.
-* Vulkan validation layers (`vulkan-validation-layers`) aren't installed on
-  the dev box. Needs `sudo pacman -S vulkan-validation-layers` for diagnostics.
-* rdb's local "skip FM_refresh" hang patch was tried and reverted: it breaks
-  every screenshot (`DisplayRegion::get_screenshot` records commands inside
-  `begin_frame(FM_refresh)`).
-* 1% lows on Vulkan are still behind GL (p99 ~8.5 ms vs ~6 ms). Next: per-frame descriptor-set
-  allocation and the per-frame semaphore/present wait in
-  `VulkanGraphicsWindow::end_frame`.
+* Window screenshots read the last *presented* swapchain image. That works
+  on every driver tested but isn't strictly allowed by the spec; a
+  persistent copy at end_frame would be the clean fix.
+* `ShowBase` exiting via `sys.exit()` from inside a task after
+  `removeAllWindows()` hangs in `Messenger.ignoreAll` on both GL and Vulkan
+  (Python lock, not the renderer). Use `os._exit` after closing windows, as
+  the QA hooks do.
 
 ## Added on this branch
 
@@ -147,3 +211,11 @@ string-made shaders, and future custom shaders.
    plus pipeline-creation timing logs.
 3. On-disk cache for generated / string-made shaders (`generated-shaders/*.sho`).
 4. `samples/ttex-vulkan/`: hologram + post shaders, demo, `shader_precache.py`.
+5. Validation-layer fixes (stencil format, present layout, semaphore leaks)
+   and the `vulkan-validation` switch.
+6. Swapchain: >=4 images when uncapped, `vulkan-present-mode`,
+   `vulkan-swapchain-images`, maxImageCount=0 clamp fix, recycled semaphores,
+   `vulkan-frame-stats`.
+7. Command-buffer pool growth (FM_refresh / many-buffers hang).
+8. Cull/Draw: screenshot deadlock fix (display), correct screenshot source,
+   vertex/index buffer regrow.
