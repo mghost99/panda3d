@@ -76,7 +76,10 @@ def main():
             fs = vs[:-5] + '.frag'
             if not os.path.exists(fs):
                 continue
-            sh = Shader.load(Shader.SL_GLSL, Filename.fromOsSpecific(vs), Filename.fromOsSpecific(fs))
+            sh = Shader.load(Shader.SL_GLSL, Filename.fromOsSpecific(os.path.abspath(vs)),
+                             Filename.fromOsSpecific(os.path.abspath(fs)))
+            if sh is None:
+                print('precache: shader', os.path.basename(vs), 'NOT LOADED'); continue
             card = base.loader.loadModel('models/box') if vfs.exists('models/box.egg') else NodePath('card')
             card.reparentTo(base.render); card.setShader(sh)
             for si in a.shader_input:
