@@ -371,6 +371,14 @@ close_window() {
     vkQueueWaitIdle(vkgsg->_queue);
     destroy_swapchain();
 
+    // The semaphore for the next acquired image is owned by the window until
+    // begin_frame() hands it to the GSG; destroy it so it doesn't leak
+    // (reported by the validation layer at vkDestroyDevice).
+    if (_image_available != VK_NULL_HANDLE) {
+      vkDestroySemaphore(vkgsg->_device, _image_available, nullptr);
+      _image_available = VK_NULL_HANDLE;
+    }
+
     _gsg.clear();
   }
   BaseGraphicsWindow::close_window();
@@ -559,6 +567,15 @@ destroy_swapchain() {
   VulkanGraphicsStateGuardian *vkgsg;
   DCAST_INTO_V(vkgsg, _gsg);
   VkDevice device = vkgsg->_device;
+
+  // An acquire semaphore left over from an end_flip() whose acquire failed
+  // (swapchain out of date, e.g. after a resize) would otherwise be
+  // overwritten by create_swapchain() and leak.  Callers wait for the queue
+  // to go idle before calling this.
+  if (_image_available != VK_NULL_HANDLE) {
+    vkDestroySemaphore(device, _image_available, nullptr);
+    _image_available = VK_NULL_HANDLE;
+  }
 
   // Make sure that the GSG's command buffer releases its resources.
   //if (vkgsg->_cmd != VK_NULL_HANDLE) {

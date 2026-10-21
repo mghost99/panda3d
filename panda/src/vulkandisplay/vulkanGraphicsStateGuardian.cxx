@@ -4718,6 +4718,11 @@ do_extract_image(VulkanTextureContext *tc, Texture *tex, int view, int z, Screen
   // We tack this onto the existing command buffer, for now.
   VulkanCommandBuffer &cmd = _render_cmd;
 
+  // A window screenshot reads the swapchain image that was last presented;
+  // hand it back in PRESENT_SRC layout afterwards
+  // (VUID-VkPresentInfoKHR-pImageIndices-01430).
+  bool restore_present = (tc->_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
   // Issue a command to transition the image into a layout optimal for
   // transferring from.
   cmd.add_barrier(tc, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -4752,6 +4757,11 @@ do_extract_image(VulkanTextureContext *tc, Texture *tex, int view, int z, Screen
     region.dstOffset = 0;
     region.size = buffer_size;
     vkCmdCopyBuffer(cmd, tc->_buffer, down._buffer, 1, &region);
+  }
+
+  if (restore_present) {
+    cmd.add_barrier(tc, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
   }
 
   down._texture = tex;
@@ -5263,6 +5273,10 @@ choose_fb_config(FbConfig &out, FrameBufferProperties &props,
       props.set_depth_bits(24);
     }
     props.set_stencil_bits(8);
+    // The combined image is bound as both depth and stencil attachment, so the
+    // pipeline's stencilAttachmentFormat must match it too
+    // (VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08917).
+    out._stencil_format = out._depth_format;
   }
   else if (props.get_depth_bits() > 0) {
     // Vulkan requires support for at least of one of these two formats.

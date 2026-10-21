@@ -28,6 +28,7 @@ extern ConfigVariableInt64 vulkan_staging_buffer_size;
 extern ConfigVariableBool vulkan_support_custom_border_color;
 extern ConfigVariableFilename vulkan_pipeline_cache_file;
 extern ConfigVariableBool vulkan_persist_pipeline_cache;
+extern ConfigVariableBool vulkan_validation;
 
 extern EXPCL_VULKANDISPLAY void init_libvulkandisplay();
 extern "C" EXPCL_VULKANDISPLAY int get_pipe_type_p3vulkandisplay();

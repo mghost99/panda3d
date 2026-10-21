@@ -75,6 +75,12 @@ ConfigVariableBool vulkan_persist_pipeline_cache
 ("vulkan-persist-pipeline-cache", true,
  PRC_DESC("Set this false to disable saving the Vulkan pipeline cache to disk."));
 
+ConfigVariableBool vulkan_validation
+("vulkan-validation", false,
+ PRC_DESC("Enable VK_LAYER_KHRONOS_validation if it is installed.  This is "
+          "slow; only turn it on for debugging.  Messages are reported "
+          "through the display notify category."));
+
 ConfigVariableBool vulkan_support_custom_border_color
 ("vulkan-support-custom-border-color", true,
  PRC_DESC("If this is set to true, and this is supported by the video card, "
