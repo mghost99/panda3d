@@ -91,14 +91,9 @@ begin_frame(FrameMode mode, Thread *current_thread) {
       << "Drawing " << this << ": exposed.\n";
   }
 
-  // make_contexts() issues FM_refresh on every window when open_windows() runs
-  // (e.g. creating many offscreen buffers during RenderPipeline init).  A full
-  // begin/end here burns command buffers and can hang forever in
-  // wait_semaphore/finish_one_frame waiting on a swapchain timeline that never
-  // retires.  VulkanGraphicsBuffer already no-ops non-FM_render modes; match that.
-  if (mode == FM_refresh) {
+  /*if (mode == FM_refresh) {
     return true;
-  }
+  }*/
 
   VulkanGraphicsStateGuardian *vkgsg;
   DCAST_INTO_R(vkgsg, _gsg, false);
@@ -192,12 +187,6 @@ void VulkanGraphicsWindow::
 end_frame(FrameMode mode, Thread *current_thread) {
   end_frame_spam(mode);
 
-  if (mode == FM_refresh) {
-    // Paired with the FM_refresh early-out in begin_frame(); no GSG frame was
-    // started, so there is nothing to submit.
-    return;
-  }
-
   VulkanGraphicsStateGuardian *vkgsg;
   DCAST_INTO_V(vkgsg, _gsg);
 
@@ -205,20 +194,22 @@ end_frame(FrameMode mode, Thread *current_thread) {
   SwapBuffer &buffer = _swap_buffers[_image_index];
 
   VkSemaphore signal_done = VK_NULL_HANDLE;
-  _framebuffer.end_rendering(vkgsg);
+  if (mode != FM_refresh) {
+    _framebuffer.end_rendering(vkgsg);
 
-  // Now we can do copy-to-texture, now that the render pass has ended.
-  copy_to_textures();
+    // Now we can do copy-to-texture, now that the render pass has ended.
+    copy_to_textures();
 
-  signal_done = buffer._render_complete;
+    signal_done = buffer._render_complete;
 
-  // If we copied the textures, transition it back to the present state.
-  //if (buffer._tc->_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
-  vkgsg->_render_cmd.add_barrier(buffer._tc,
-                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                                 VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
-                                 0);
-  //}
+    // If we copied the textures, transition it back to the present state.
+    //if (buffer._tc->_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+    vkgsg->_render_cmd.add_barrier(buffer._tc,
+                                   VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                                   VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+                                   0);
+    //}
+  }
 
   // Note: this will close the command buffer, and unsignal the previous
   // frame's semaphore.
