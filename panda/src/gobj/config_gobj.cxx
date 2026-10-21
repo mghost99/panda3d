@@ -259,6 +259,14 @@ ConfigVariableBool cache_generated_shaders
  PRC_DESC("Set this true to cause all generated shaders to be cached in "
           "memory.  This is useful to prevent unnecessary recompilation."));
 
+ConfigVariableBool cache_generated_shaders_on_disk
+("cache-generated-shaders-on-disk", true,
+ PRC_DESC("Set this true to store shaders created from strings (including "
+          "those made by the ShaderGenerator) in compiled form in "
+          "model-cache-dir/generated-shaders, keyed by a hash of their source, "
+          "so that later runs skip the GLSL/Cg -> SPIR-V compilation.  Only "
+          "used when the model cache is active."));
+
 ConfigVariableBool vertices_float64
 ("vertices-float64", false,
  PRC_DESC("When this is true, the default float format for vertices "

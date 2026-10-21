@@ -1019,6 +1019,80 @@ load_compute(SourceLanguage lang, const Filename &fn,
   return shader;
 }
 
+#include "bamFile.h"
+#include "trueClock.h"
+
+/**
+ * Returns the on-disk cache filename for a shader whose source (and language)
+ * has been serialized into the given datagram, or an empty Filename if the
+ * generated-shader disk cache is not available.
+ */
+static Filename
+get_generated_shader_cache_filename(Datagram &dg) {
+  if (!cache_generated_shaders_on_disk) {
+    return Filename();
+  }
+  BamCache *cache = BamCache::get_global_ptr();
+  if (!cache->get_active() || cache->get_root().empty()) {
+    return Filename();
+  }
+  // Bump this whenever the compiler/SPIR-V passes change incompatibly.
+  dg.add_string("ttex-gensho-1");
+  const unsigned char *data = (const unsigned char *)dg.get_data();
+  size_t len = dg.get_length();
+  uint64_t h1 = 1469598103934665603ULL, h2 = 0x9e3779b97f4a7c15ULL;
+  for (size_t i = 0; i < len; ++i) {
+    h1 = (h1 ^ data[i]) * 1099511628211ULL;
+    h2 = (h2 ^ data[i]) * 0x100000001b3ULL + (h2 >> 29);
+  }
+  char buf[80];
+  snprintf(buf, sizeof(buf), "%016llx%016llx-%zu.sho", (unsigned long long)h1, (unsigned long long)h2, len);
+  return Filename(Filename(cache->get_root(), "generated-shaders"), buf);
+}
+
+/**
+ * Tries to read a previously compiled shader from the disk cache.
+ */
+static PT(Shader)
+read_generated_shader_cache(const Filename &fn) {
+  if (fn.empty() || !fn.exists()) {
+    return nullptr;
+  }
+  BamFile bam;
+  if (!bam.open_read(fn, false)) {
+    return nullptr;
+  }
+  TypedWritable *obj = bam.read_object();
+  if (obj == nullptr || !bam.resolve() || !obj->is_of_type(Shader::get_class_type())) {
+    return nullptr;
+  }
+  PT(Shader) shader = DCAST(Shader, obj);
+  bam.close();
+  return shader;
+}
+
+/**
+ * Writes a freshly compiled shader to the disk cache (atomically).
+ */
+static void
+write_generated_shader_cache(const Filename &fn, Shader *shader) {
+  if (fn.empty()) {
+    return;
+  }
+  // make_dir() creates the directories leading up to the file.
+  Filename(fn).make_dir();
+  Filename tmp = Filename::binary_filename(fn.get_fullpath() + ".tmp");
+  BamFile bam;
+  if (!bam.open_write(tmp, false)) {
+    return;
+  }
+  bool ok = bam.write_object(shader);
+  bam.close();
+  if (!ok || !tmp.rename_to(fn)) {
+    tmp.unlink();
+  }
+}
+
 /**
  * Loads the shader, using the string as shader body.
  */
@@ -1047,9 +1121,26 @@ make(string body, SourceLanguage lang, const CompilerOptions &options) {
     }
   }
 
-  PT(Shader) shader = new Shader(lang);
-  if (!shader->load(sbody, options)) {
-    return nullptr;
+  Datagram key;
+  key.add_uint8((uint8_t)lang);
+  sbody.write_datagram(key);
+  Filename cache_fn = get_generated_shader_cache_filename(key);
+  PT(Shader) shader = read_generated_shader_cache(cache_fn);
+  if (shader != nullptr && !shader->_modules.empty()) {
+    if (shader_cat.is_debug()) {
+      shader_cat.debug() << "Generated shader found in disk cache: " << cache_fn << "\n";
+    }
+  } else {
+    double t0 = TrueClock::get_global_ptr()->get_short_time();
+    shader = new Shader(lang);
+    if (!shader->load(sbody, options)) {
+      return nullptr;
+    }
+    double ms = (TrueClock::get_global_ptr()->get_short_time() - t0) * 1000.0;
+    if (shader_cat.is_debug() || ms > 20.0) {
+      shader_cat.info() << "Compiled generated shader in " << ms << " ms\n";
+    }
+    write_generated_shader_cache(cache_fn, shader);
   }
 
   /*if (cache_generated_shaders) {
@@ -1102,10 +1193,18 @@ make(SourceLanguage lang, string vertex, string fragment, string geometry,
     }
   }
 
-  PT(Shader) shader = new Shader(lang);
-  shader->_filename = ShaderFile("created-shader");
-  if (!shader->load(sbody, options)) {
-    return nullptr;
+  Datagram key;
+  key.add_uint8((uint8_t)lang);
+  sbody.write_datagram(key);
+  Filename cache_fn = get_generated_shader_cache_filename(key);
+  PT(Shader) shader = read_generated_shader_cache(cache_fn);
+  if (shader == nullptr || shader->_modules.empty()) {
+    shader = new Shader(lang);
+    shader->_filename = ShaderFile("created-shader");
+    if (!shader->load(sbody, options)) {
+      return nullptr;
+    }
+    write_generated_shader_cache(cache_fn, shader);
   }
 
   /*if (cache_generated_shaders) {

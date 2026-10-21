@@ -52,6 +52,7 @@ extern EXPCL_PANDA_GOBJ ConfigVariableBool connect_triangle_strips;
 extern EXPCL_PANDA_GOBJ ConfigVariableBool preserve_triangle_strips;
 extern EXPCL_PANDA_GOBJ ConfigVariableBool dump_generated_shaders;
 extern EXPCL_PANDA_GOBJ ConfigVariableBool cache_generated_shaders;
+extern EXPCL_PANDA_GOBJ ConfigVariableBool cache_generated_shaders_on_disk;
 extern EXPCL_PANDA_GOBJ ConfigVariableBool vertices_float64;
 extern EXPCL_PANDA_GOBJ ConfigVariableInt vertex_column_alignment;
 extern EXPCL_PANDA_GOBJ ConfigVariableBool vertex_animation_align_16;
