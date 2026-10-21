@@ -19,6 +19,8 @@
 #include "configVariableBool.h"
 #include "configVariableInt64.h"
 #include "configVariableFilename.h"
+#include "configVariableString.h"
+#include "configVariableInt.h"
 
 NotifyCategoryDecl(vulkandisplay, EXPCL_VULKANDISPLAY, EXPTP_VULKANDISPLAY);
 
@@ -29,6 +31,24 @@ extern ConfigVariableBool vulkan_support_custom_border_color;
 extern ConfigVariableFilename vulkan_pipeline_cache_file;
 extern ConfigVariableBool vulkan_persist_pipeline_cache;
 extern ConfigVariableBool vulkan_validation;
+extern ConfigVariableString vulkan_present_mode;
+extern ConfigVariableInt vulkan_swapchain_images;
+extern ConfigVariableInt vulkan_frame_stats;
+extern ConfigVariableBool vulkan_recycle_semaphores;
+
+// Lightweight per-interval counters, printed every vulkan-frame-stats frames.
+struct VulkanFrameStats {
+  uint64_t vb_prepare = 0, vb_update = 0, vb_inuse = 0, vb_bytes = 0;
+  uint64_t ib_prepare = 0, ib_update = 0;
+  uint64_t alloc_mem = 0, new_page = 0, create_buffer = 0, dset_alloc = 0;
+  double wait_ms = 0, wait_max = 0;
+  double acquire_ms = 0, acquire_max = 0;
+  double present_ms = 0, present_max = 0;
+  uint64_t acquire_slow = 0, present_slow = 0;
+  uint64_t sem_create = 0; double sem_ms = 0, sem_max = 0;
+  uint64_t frames = 0;
+};
+extern VulkanFrameStats vulkan_stats;
 
 extern EXPCL_VULKANDISPLAY void init_libvulkandisplay();
 extern "C" EXPCL_VULKANDISPLAY int get_pipe_type_p3vulkandisplay();

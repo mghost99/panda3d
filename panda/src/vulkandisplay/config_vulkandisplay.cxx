@@ -81,6 +81,36 @@ ConfigVariableBool vulkan_validation
           "slow; only turn it on for debugging.  Messages are reported "
           "through the display notify category."));
 
+ConfigVariableString vulkan_present_mode
+("vulkan-present-mode", "auto",
+ PRC_DESC("Swapchain present mode: auto, fifo, fifo-relaxed, mailbox or "
+          "immediate.  auto means fifo when sync-video is on, otherwise "
+          "mailbox if available, else immediate.  Unsupported modes fall "
+          "back to fifo."));
+
+ConfigVariableInt vulkan_swapchain_images
+("vulkan-swapchain-images", 0,
+ PRC_DESC("Number of swapchain images to request.  0 means automatic: "
+          "1 + back-buffers, but at least 4 for the uncapped mailbox and "
+          "immediate modes (sync-video off), since with fewer images "
+          "vkAcquireNextImageKHR periodically blocks on the presentation "
+          "engine, which shows up as 1% low / p99 frame time spikes."));
+
+ConfigVariableInt vulkan_frame_stats
+("vulkan-frame-stats", 0,
+ PRC_DESC("If nonzero, print Vulkan backend counters (buffer uploads, "
+          "allocations, fence/acquire/present wait times) every this many "
+          "frames to the vulkandisplay info log."));
+
+VulkanFrameStats vulkan_stats;
+
+ConfigVariableBool vulkan_recycle_semaphores
+("vulkan-recycle-semaphores", true,
+ PRC_DESC("Reuse the per-frame swapchain acquire semaphores once the frame "
+          "that waited on them has finished, instead of creating and "
+          "destroying one VkSemaphore every frame (each is a kernel object "
+          "on most drivers, and creation occasionally stalls)."));
+
 ConfigVariableBool vulkan_support_custom_border_color
 ("vulkan-support-custom-border-color", true,
  PRC_DESC("If this is set to true, and this is supported by the video card, "

@@ -11,6 +11,7 @@
  * @date 2016-02-16
  */
 
+#include <chrono>
 #include "vulkanGraphicsStateGuardian.h"
 #include "vulkanGeomMunger.h"
 #include "vulkanBufferContext.h"
@@ -991,6 +992,10 @@ destroy_device() {
   vkDestroyPipelineLayout(_device, _initial_pipeline_layout, nullptr);
 
   vkDestroySemaphore(_device, _timeline_semaphore, nullptr);
+  for (VkSemaphore semaphore : _free_semaphores) {
+    vkDestroySemaphore(_device, semaphore, nullptr);
+  }
+  _free_semaphores.clear();
 
   // Also free all the memory pages before destroying the device.
   _memory_pages.clear();
@@ -1101,6 +1106,7 @@ bool VulkanGraphicsStateGuardian::
 allocate_memory(VulkanMemoryBlock &block, const VkMemoryRequirements &reqs,
                 VkFlags required_flags, bool linear) {
   //MutexHolder holder(_allocator_lock);
+  ++vulkan_stats.alloc_mem;
 
   for (VulkanMemoryPage &page : _memory_pages) {
     if (page.meets_requirements(reqs, required_flags, linear)) {
@@ -1202,6 +1208,7 @@ allocate_memory(VulkanMemoryBlock &block, const VkMemoryRequirements &reqs,
   block = std::move(*result);
   delete result;
 
+  ++vulkan_stats.new_page;
   _memory_pages.push_back(std::move(page));
   return true;
 }
@@ -2373,6 +2380,7 @@ release_shader(ShaderContext *context) {
 VertexBufferContext *VulkanGraphicsStateGuardian::
 prepare_vertex_buffer(GeomVertexArrayData *array_data) {
   PStatTimer timer(_prepare_vertex_buffer_pcollector);
+  ++vulkan_stats.vb_prepare;
 
   VulkanGraphicsPipe *vkpipe;
   DCAST_INTO_R(vkpipe, get_pipe(), nullptr);
@@ -2418,6 +2426,8 @@ update_vertex_buffer(VulkanVertexBufferContext *vbc,
     PStatGPUTimer timer(this, _load_vertex_buffer_pcollector);
 
     VkDeviceSize num_bytes = reader->get_data_size_bytes();
+    ++vulkan_stats.vb_update;
+    vulkan_stats.vb_bytes += num_bytes;
     if (num_bytes != 0) {
       const unsigned char *client_pointer = reader->get_read_pointer(force);
       if (client_pointer == nullptr) {
@@ -2428,6 +2438,7 @@ update_vertex_buffer(VulkanVertexBufferContext *vbc,
       if (vbc->_last_use_frame > _last_finished_frame) {
         // Still in use, so insert an execution dependency.
         // Surely there should be a more optimal way to do this...
+        ++vulkan_stats.vb_inuse;
         VkBufferMemoryBarrier2 barrier;
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.pNext = nullptr;
@@ -2515,6 +2526,7 @@ release_vertex_buffer(VertexBufferContext *context) {
  */
 IndexBufferContext *VulkanGraphicsStateGuardian::
 prepare_index_buffer(GeomPrimitive *primitive) {
+  ++vulkan_stats.ib_prepare;
   PStatTimer timer(_prepare_index_buffer_pcollector);
 
   VulkanGraphicsPipe *vkpipe;
@@ -2603,6 +2615,7 @@ update_index_buffer(VulkanIndexBufferContext *ibc,
       if (ibc->_last_use_frame > _last_finished_frame) {
         // Still in use, so insert an execution dependency.
         // Surely there should be a more optimal way to do this...
+        ++vulkan_stats.vb_inuse;
         VkBufferMemoryBarrier2 barrier;
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.pNext = nullptr;
@@ -3417,6 +3430,30 @@ begin_frame(Thread *current_thread, VkSemaphore wait_for) {
     }
   }
 
+  if (is_new_clock_frame && vulkan_frame_stats > 0 &&
+      ++vulkan_stats.frames >= (uint64_t)vulkan_frame_stats) {
+    VulkanFrameStats &st = vulkan_stats;
+    double n = (double)st.frames;
+    vulkandisplay_cat.info()
+      << "frame-stats " << st.frames << " frames:"
+      << " vb_prepare/f=" << st.vb_prepare / n
+      << " vb_update/f=" << st.vb_update / n
+      << " buf_inuse/f=" << st.vb_inuse / n
+      << " vb_kB/f=" << st.vb_bytes / n / 1024.0
+      << " ib_prepare/f=" << st.ib_prepare / n
+      << " alloc/f=" << st.alloc_mem / n
+      << " new_page=" << st.new_page
+      << " create_buffer/f=" << st.create_buffer / n
+      << " dset_alloc/f=" << st.dset_alloc / n
+      << " wait_ms/f=" << st.wait_ms / n << " (max " << st.wait_max << ")"
+      << " acquire_ms/f=" << st.acquire_ms / n << " (max " << st.acquire_max << ")"
+      << " present_ms/f=" << st.present_ms / n << " (max " << st.present_max << ")"
+      << " slow(>4ms) acquire=" << st.acquire_slow << " present=" << st.present_slow
+      << " sem_create=" << st.sem_create << " (" << st.sem_ms << " ms, max " << st.sem_max << ")"
+      << "\n";
+    st = VulkanFrameStats();
+  }
+
   if (is_new_clock_frame) {
 #ifdef DO_PSTATS
     if (!_timer_queries_active) {
@@ -3679,7 +3716,13 @@ finish_frame(FrameData &frame_data) {
   frame_data._pending_destroy_samplers.clear();
 
   for (VkSemaphore semaphore : frame_data._pending_destroy_semaphores) {
-    vkDestroySemaphore(_device, semaphore, nullptr);
+    // The frame that waited on this binary semaphore has completed, so it is
+    // unsignaled with no pending operations and may be reused.
+    if (vulkan_recycle_semaphores && !_closing_gsg && _free_semaphores.size() < 16) {
+      _free_semaphores.push_back(semaphore);
+    } else {
+      vkDestroySemaphore(_device, semaphore, nullptr);
+    }
   }
   frame_data._pending_destroy_semaphores.clear();
 
@@ -4988,6 +5031,7 @@ do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset) {
 bool VulkanGraphicsStateGuardian::
 create_buffer(VkDeviceSize size, VkBuffer &buffer, VulkanMemoryBlock &block,
               int usage_flags, VkMemoryPropertyFlagBits flags) {
+  ++vulkan_stats.create_buffer;
   VulkanGraphicsPipe *vkpipe;
   DCAST_INTO_R(vkpipe, get_pipe(), false);
 
@@ -5166,12 +5210,24 @@ create_attachment(VkFormat format, const VkExtent3D &extent,
  */
 VkSemaphore VulkanGraphicsStateGuardian::
 create_semaphore() {
+  if (!_free_semaphores.empty()) {
+    VkSemaphore semaphore = _free_semaphores.back();
+    _free_semaphores.pop_back();
+    return semaphore;
+  }
+  auto stats_t0 = std::chrono::steady_clock::now();
   VkSemaphoreCreateInfo semaphore_info = {};
   semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
   VkSemaphore semaphore;
   VkResult
   err = vkCreateSemaphore(_device, &semaphore_info, nullptr, &semaphore);
+  {
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stats_t0).count();
+    ++vulkan_stats.sem_create;
+    vulkan_stats.sem_ms += ms;
+    vulkan_stats.sem_max = std::max(vulkan_stats.sem_max, ms);
+  }
   nassertr_always(err == VK_SUCCESS, VK_NULL_HANDLE);
   return semaphore;
 }
@@ -5182,6 +5238,7 @@ create_semaphore() {
 bool VulkanGraphicsStateGuardian::
 wait_semaphore(VkSemaphore semaphore, uint64_t value, uint64_t timeout) {
   PStatTimer timer(_wait_semaphore_pcollector);
+  auto stats_t0 = std::chrono::steady_clock::now();
   VkSemaphoreWaitInfo wait_info;
   wait_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
   wait_info.pNext = nullptr;
@@ -5190,6 +5247,11 @@ wait_semaphore(VkSemaphore semaphore, uint64_t value, uint64_t timeout) {
   wait_info.pSemaphores = &semaphore;
   wait_info.pValues = &value;
   VkResult err = vkWaitSemaphores(_device, &wait_info, timeout);
+  {
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stats_t0).count();
+    vulkan_stats.wait_ms += ms;
+    vulkan_stats.wait_max = std::max(vulkan_stats.wait_max, ms);
+  }
   if (err == VK_ERROR_DEVICE_LOST) {
     mark_new();
   }
@@ -6016,6 +6078,7 @@ get_attrib_descriptor_set(VkDescriptorSet &out,
   alloc_info.descriptorPool = _descriptor_pool;
   alloc_info.descriptorSetCount = 1;
   alloc_info.pSetLayouts = &layout;
+  ++vulkan_stats.dset_alloc;
   VkResult err = vkAllocateDescriptorSets(_device, &alloc_info, &set._handle);
   if (err) {
     vulkan_error(err, "Failed to allocate descriptor set for attribute");

@@ -11,6 +11,7 @@
  * @date 2016-02-16
  */
 
+#include <chrono>
 #include "vulkanGraphicsWindow.h"
 #include "vulkanGraphicsStateGuardian.h"
 
@@ -253,7 +254,14 @@ begin_flip() {
   present.pImageIndices = &_image_index;
   present.pResults = results;
 
+  auto stats_t0 = std::chrono::steady_clock::now();
   err = vkQueuePresentKHR(queue, &present);
+  {
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stats_t0).count();
+    vulkan_stats.present_ms += ms;
+    vulkan_stats.present_max = std::max(vulkan_stats.present_max, ms);
+    if (ms > 4.0) ++vulkan_stats.present_slow;
+  }
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     // It's out of date.  We need to recreate the swap chain.
     if (vulkandisplay_cat.is_debug()) {
@@ -314,9 +322,16 @@ end_flip() {
 
   // Get a new image for rendering into.  This may wait until a new image is
   // available.
+  auto stats_t0 = std::chrono::steady_clock::now();
   VkResult
   err = vkAcquireNextImageKHR(vkgsg->_device, _swapchain, UINT64_MAX,
                               _image_available, VK_NULL_HANDLE, &_image_index);
+  {
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stats_t0).count();
+    vulkan_stats.acquire_ms += ms;
+    vulkan_stats.acquire_max = std::max(vulkan_stats.acquire_max, ms);
+    if (ms > 4.0) ++vulkan_stats.acquire_slow;
+  }
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     // It's out of date.  We need to recreate the swap chain.
     if (vulkandisplay_cat.is_debug()) {
@@ -642,7 +657,9 @@ create_swapchain() {
   }
 
   uint32_t num_images = (uint32_t)(1 + _fb_properties.get_back_buffers());
-  num_images = std::min(surf_caps.maxImageCount, num_images);
+  if (surf_caps.maxImageCount != 0) {
+    num_images = std::min(surf_caps.maxImageCount, num_images);
+  }
   num_images = std::max(surf_caps.minImageCount, num_images);
 
   _swapchain_size.set(
@@ -681,20 +698,71 @@ create_swapchain() {
 
   // Choose a present mode.  Use FIFO mode as fallback, which is always
   // available.
+  auto has_mode = [&](VkPresentModeKHR mode) {
+    for (uint32_t i = 0; i < num_present_modes; ++i) {
+      if (present_modes[i] == mode) {
+        return true;
+      }
+    }
+    return false;
+  };
   swapchain_info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-  if (!sync_video) {
-    for (size_t i = 0; i < num_present_modes; ++i) {
-      if (present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+  std::string mode_str = vulkan_present_mode.get_value();
+  if (mode_str == "auto" || mode_str.empty()) {
+    if (!sync_video) {
+      if (has_mode(VK_PRESENT_MODE_MAILBOX_KHR)) {
         // This is the lowest-latency non-tearing mode, so we'll take this.
         swapchain_info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-        break;
-      }
-      if (present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
-        // This is the fastest present mode, though it tears, so we'll use this
-        // if mailbox mode isn't available.
+      } else if (has_mode(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
         swapchain_info.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
       }
     }
+  } else {
+    VkPresentModeKHR want = VK_PRESENT_MODE_FIFO_KHR;
+    if (mode_str == "mailbox") {
+      want = VK_PRESENT_MODE_MAILBOX_KHR;
+    } else if (mode_str == "immediate") {
+      want = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    } else if (mode_str == "fifo-relaxed" || mode_str == "fifo_relaxed") {
+      want = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    } else if (mode_str != "fifo") {
+      vulkandisplay_cat.warning()
+        << "Unknown vulkan-present-mode " << mode_str << ", using fifo\n";
+    }
+    if (has_mode(want)) {
+      swapchain_info.presentMode = want;
+    } else {
+      vulkandisplay_cat.warning()
+        << "vulkan-present-mode " << mode_str
+        << " not supported by surface, using fifo\n";
+    }
+  }
+
+  // Pick the image count now that we know the present mode.
+  uint32_t want_images = num_images;
+  if (vulkan_swapchain_images > 0) {
+    want_images = (uint32_t)vulkan_swapchain_images;
+  } else if (swapchain_info.presentMode == VK_PRESENT_MODE_MAILBOX_KHR ||
+             swapchain_info.presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+    // Uncapped modes: with only 2-3 images, vkAcquireNextImageKHR regularly
+    // blocks for several ms waiting for the presentation engine (measured on
+    // NVIDIA/X11: p99 frame time 10 ms with 3 images, 4.6 ms with 4).
+    want_images = std::max(want_images, 4u);
+  }
+  if (surf_caps.maxImageCount != 0) {
+    want_images = std::min(surf_caps.maxImageCount, want_images);
+  }
+  want_images = std::max(surf_caps.minImageCount, want_images);
+  swapchain_info.minImageCount = want_images;
+
+  if (vulkandisplay_cat.is_info()) {
+    static const char *const mode_names[] = {"immediate", "mailbox", "fifo", "fifo-relaxed"};
+    vulkandisplay_cat.info()
+      << "Swapchain " << _swapchain_size[0] << "x" << _swapchain_size[1]
+      << " present mode "
+      << ((uint32_t)swapchain_info.presentMode < 4 ? mode_names[swapchain_info.presentMode] : "other")
+      << ", " << want_images << " images requested (surface min "
+      << surf_caps.minImageCount << ", max " << surf_caps.maxImageCount << ")\n";
   }
 
   err = vkCreateSwapchainKHR(device, &swapchain_info, nullptr, &_swapchain);
