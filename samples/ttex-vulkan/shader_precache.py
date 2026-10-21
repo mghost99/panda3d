@@ -83,6 +83,7 @@ def main():
     shos = glob.glob(os.path.join(root, 'generated-shaders', '*.sho'))
     pc = os.path.join(root, 'vulkan-pipeline-cache.bin')
     print('precache: %d generated shaders cached, pipeline cache %d bytes' % (len(shos), os.path.getsize(pc) if os.path.exists(pc) else 0))
+    sys.stdout.flush(); sys.stderr.flush()  # os._exit skips buffered output when piped
     os._exit(0)
 
 
