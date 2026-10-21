@@ -422,6 +422,7 @@ reset() {
 
   err = vkAllocateCommandBuffers(_device, &alloc_info, &_free_command_buffers[0]);
   nassertv(!err);
+  _num_command_buffers = num_command_buffers;
 
   // Create a timeline semaphore so we can track when rendering is done.
   {
@@ -3947,7 +3948,43 @@ finish_one_frame() {
  */
 VkCommandBuffer VulkanGraphicsStateGuardian::
 create_command_buffer() {
-  while (_free_command_buffers.empty() && finish_one_frame()) {
+  // Reclaim command buffers from finished frames, but only wait for frames
+  // whose work has actually been submitted.  The frame currently being
+  // recorded (and anything still pending in it) can never complete before we
+  // return, so waiting on it would deadlock.  This used to hang as soon as a
+  // single frame needed more than the initial pool, e.g. with ~40 offscreen
+  // buffers (RenderPipeline-style setups), or when make_contexts() issued
+  // FM_refresh on every window during open_windows().
+  while (_free_command_buffers.empty() &&
+         _frame_data_head != _frame_data_capacity) {
+    FrameData &oldest = _frame_data_pool[_frame_data_tail];
+    if (&oldest == _frame_data || oldest._watermark > _last_submitted_watermark) {
+      break;
+    }
+    finish_one_frame();
+  }
+
+  if (_free_command_buffers.empty()) {
+    // Grow the pool instead.
+    const uint32_t grow = 16;
+    VkCommandBufferAllocateInfo alloc_info;
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.pNext = nullptr;
+    alloc_info.commandPool = _cmd_pool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = grow;
+    _free_command_buffers.resize(grow);
+    VkResult err = vkAllocateCommandBuffers(_device, &alloc_info, &_free_command_buffers[0]);
+    if (err) {
+      _free_command_buffers.clear();
+      vulkan_error(err, "Failed to grow command buffer pool");
+      return VK_NULL_HANDLE;
+    }
+    _num_command_buffers += grow;
+    if (vulkandisplay_cat.is_debug()) {
+      vulkandisplay_cat.debug()
+        << "Grew command buffer pool to " << _num_command_buffers << "\n";
+    }
   }
 
   VkCommandBuffer handle = _free_command_buffers.back();
@@ -3968,6 +4005,9 @@ begin_command_buffer(VkSemaphore wait_for) {
   };
 
   VkCommandBuffer handle = create_command_buffer();
+  if (handle == VK_NULL_HANDLE) {
+    return VulkanCommandBuffer();
+  }
 
 #ifndef NDEBUG
   if (vulkandisplay_cat.is_spam()) {

@@ -372,6 +372,7 @@ private:
   uint64_t _next_end_command_buffer_seq = 1;
   pvector<VkCommandBuffer> _free_command_buffers; // new and unused
   pvector<VkSemaphore> _free_semaphores; // recycled binary semaphores
+  uint32_t _num_command_buffers = 0;
   pvector<VkCommandBuffer> _pending_command_buffers; // ready to submit
   pvector<VkBufferMemoryBarrier2> _pending_buffer_barriers;
   pvector<VkImageMemoryBarrier2> _pending_image_barriers;
