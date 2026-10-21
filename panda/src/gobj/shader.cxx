@@ -1037,7 +1037,7 @@ get_generated_shader_cache_filename(Datagram &dg) {
     return Filename();
   }
   // Bump this whenever the compiler/SPIR-V passes change incompatibly.
-  dg.add_string("ttex-gensho-1");
+  dg.add_string("gensho-1");
   const unsigned char *data = (const unsigned char *)dg.get_data();
   size_t len = dg.get_length();
   uint64_t h1 = 1469598103934665603ULL, h2 = 0x9e3779b97f4a7c15ULL;

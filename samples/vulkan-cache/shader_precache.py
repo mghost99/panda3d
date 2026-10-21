@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""TTEX shader pre-cache ("Pre-compiling shaders..." step).
+"""Shader / pipeline pre-cache tool for the Vulkan backend.
 
 Renders a list of models offscreen so that Panda3D compiles every generated
-shader (ShaderGenerator / Shader.make) and every custom GLSL shader to SPIR-V,
+shader (ShaderGenerator / Shader.make) and every listed GLSL shader to SPIR-V,
 and so the Vulkan driver builds the matching pipelines.  Results land in:
 
   <model-cache-dir>/generated-shaders/*.sho   GPU-independent compiled shaders
@@ -11,10 +11,14 @@ and so the Vulkan driver builds the matching pipelines.  Results land in:
                                                (header-checked against vendor,
                                                device id and pipelineCacheUUID)
 
-Usage (from the game root, so config/*.prc vfs-mounts resolve):
-  python3 shader_precache.py --prc config/dev.prc --models models.txt \
-      [--shaders DIR] [--display p3vulkandisplay]
-models.txt: one model path per line (e.g. phase_4/models/neighborhoods/toontown_central).
+An application can run this as a "pre-compiling shaders" step before its first
+launch on a machine.  Usage (from the application root, so its prc vfs-mounts
+resolve):
+  python3 shader_precache.py [--prc app.prc] [--models models.txt] [--model M]
+      [--shaders DIR] [--shader-input name=v[,v...]] [--display p3vulkandisplay]
+models.txt: one model path per line (e.g. models/panda).  --shaders loads every
+DIR/*.vert + *.frag pair; --shader-input gives the custom uniforms those
+shaders need (float or vec2/3/4), since a missing input is an error.
 """
 import argparse, os, sys, time, glob
 
@@ -25,6 +29,8 @@ def main():
     ap.add_argument('--models', help='file with one model path per line')
     ap.add_argument('--model', action='append', default=[])
     ap.add_argument('--shaders', help='dir of *.vert/*.frag pairs to precompile')
+    ap.add_argument('--shader-input', action='append', default=[],
+                    help='name=v[,v...] uniform set on every --shaders card')
     ap.add_argument('--display', default='p3vulkandisplay')
     ap.add_argument('--frames', type=int, default=3)
     a = ap.parse_args()
@@ -73,7 +79,10 @@ def main():
             sh = Shader.load(Shader.SL_GLSL, Filename.fromOsSpecific(vs), Filename.fromOsSpecific(fs))
             card = base.loader.loadModel('models/box') if vfs.exists('models/box.egg') else NodePath('card')
             card.reparentTo(base.render); card.setShader(sh)
-            card.setShaderInput('rim_color', Vec4(1)); card.setShaderInput('rim_power', 2.0)
+            for si in a.shader_input:
+                name, _, val = si.partition('=')
+                v = [float(x) for x in val.split(',')] if val else [0.0]
+                card.setShaderInput(name, v[0] if len(v) == 1 else Vec4(*(v + [0.0] * (4 - len(v)))[:4]))
             for _ in range(a.frames):
                 base.graphicsEngine.renderFrame()
             card.removeNode(); print('precache: shader', os.path.basename(vs), 'ok' if not sh.getErrorFlag() else 'ERROR')
