@@ -1469,46 +1469,7 @@ begin_frame(GraphicsStateGuardianBase *gsg, Thread *current_thread) {
   ReMutexHolder holder(_lock, current_thread);
 
   // First, release all the textures, geoms, and buffers awaiting release.
-  if (!_released_textures.empty()) {
-    gsg->release_textures(_released_textures);
-    _released_textures.clear();
-  }
-
-  if (!_released_samplers.empty()) {
-    for (SamplerContext *sc : _released_samplers) {
-      gsg->release_sampler(sc);
-    }
-    _released_samplers.clear();
-  }
-
-  if (!_released_geoms.empty()) {
-    for (GeomContext *gc : _released_geoms) {
-      gsg->release_geom(gc);
-    }
-    _released_geoms.clear();
-  }
-
-  if (!_released_shaders.empty()) {
-    for (ShaderContext *sc : _released_shaders) {
-      gsg->release_shader(sc);
-    }
-    _released_shaders.clear();
-  }
-
-  if (!_released_vertex_buffers.empty()) {
-    gsg->release_vertex_buffers(_released_vertex_buffers);
-    _released_vertex_buffers.clear();
-  }
-
-  if (!_released_index_buffers.empty()) {
-    gsg->release_index_buffers(_released_index_buffers);
-    _released_index_buffers.clear();
-  }
-
-  if (!_released_shader_buffers.empty()) {
-    gsg->release_shader_buffers(_released_shader_buffers);
-    _released_shader_buffers.clear();
-  }
+  do_release_now(gsg);
 
   // Reset the residency trackers.
   _texture_residency.begin_frame(current_thread);
@@ -1630,6 +1591,54 @@ end_frame(Thread *current_thread) {
   _vbuffer_residency.end_frame(current_thread);
   _ibuffer_residency.end_frame(current_thread);
   _sbuffer_residency.end_frame(current_thread);
+}
+
+/**
+ * Asks the GraphicsStateGuardian to release all contexts that are pending
+ * release.  Assumes the lock is held.
+ */
+void PreparedGraphicsObjects::
+do_release_now(GraphicsStateGuardianBase *gsg) {
+  if (!_released_textures.empty()) {
+    gsg->release_textures(_released_textures);
+    _released_textures.clear();
+  }
+
+  if (!_released_samplers.empty()) {
+    for (SamplerContext *sc : _released_samplers) {
+      gsg->release_sampler(sc);
+    }
+    _released_samplers.clear();
+  }
+
+  if (!_released_geoms.empty()) {
+    for (GeomContext *gc : _released_geoms) {
+      gsg->release_geom(gc);
+    }
+    _released_geoms.clear();
+  }
+
+  if (!_released_shaders.empty()) {
+    for (ShaderContext *sc : _released_shaders) {
+      gsg->release_shader(sc);
+    }
+    _released_shaders.clear();
+  }
+
+  if (!_released_vertex_buffers.empty()) {
+    gsg->release_vertex_buffers(_released_vertex_buffers);
+    _released_vertex_buffers.clear();
+  }
+
+  if (!_released_index_buffers.empty()) {
+    gsg->release_index_buffers(_released_index_buffers);
+    _released_index_buffers.clear();
+  }
+
+  if (!_released_shader_buffers.empty()) {
+    gsg->release_shader_buffers(_released_shader_buffers);
+    _released_shader_buffers.clear();
+  }
 }
 
 /**

@@ -171,13 +171,21 @@ typedef GLint (APIENTRYP PFNGLGETUNIFORMLOCATIONPROC) (GLuint program, const GLc
 typedef void (APIENTRYP PFNGLGETINTEGERI_VPROC) (GLenum target, GLuint index, GLint *data);
 typedef void (APIENTRYP PFNGLLINKPROGRAMPROC) (GLuint program);
 typedef void (APIENTRYP PFNGLSHADERSOURCEPROC_P) (GLuint shader, GLsizei count, const GLchar* const *string, const GLint *length);
+typedef void (APIENTRYP PFNGLSPECIALIZESHADERARBPROC) (GLuint shader, const GLchar *, GLuint, const GLuint *, const GLuint *);
 typedef void (APIENTRYP PFNGLUSEPROGRAMPROC) (GLuint program);
+typedef void (APIENTRYP PFNGLUNIFORM1FPROC) (GLint location, GLfloat v0);
 typedef void (APIENTRYP PFNGLUNIFORM4FPROC) (GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+typedef void (APIENTRYP PFNGLUNIFORM1DPROC) (GLint location, GLdouble v0);
+typedef void (APIENTRYP PFNGLUNIFORM4DPROC) (GLint location, GLdouble v0, GLdouble v1, GLdouble v2, GLdouble v3);
 typedef void (APIENTRYP PFNGLUNIFORM1IPROC) (GLint location, GLint v0);
 typedef void (APIENTRYP PFNGLUNIFORM1FVPROC) (GLint location, GLsizei count, const GLfloat *value);
 typedef void (APIENTRYP PFNGLUNIFORM2FVPROC) (GLint location, GLsizei count, const GLfloat *value);
 typedef void (APIENTRYP PFNGLUNIFORM3FVPROC) (GLint location, GLsizei count, const GLfloat *value);
 typedef void (APIENTRYP PFNGLUNIFORM4FVPROC) (GLint location, GLsizei count, const GLfloat *value);
+typedef void (APIENTRYP PFNGLUNIFORM1DVPROC) (GLint location, GLsizei count, const GLdouble *value);
+typedef void (APIENTRYP PFNGLUNIFORM2DVPROC) (GLint location, GLsizei count, const GLdouble *value);
+typedef void (APIENTRYP PFNGLUNIFORM3DVPROC) (GLint location, GLsizei count, const GLdouble *value);
+typedef void (APIENTRYP PFNGLUNIFORM4DVPROC) (GLint location, GLsizei count, const GLdouble *value);
 typedef void (APIENTRYP PFNGLUNIFORM1IVPROC) (GLint location, GLsizei count, const GLint *value);
 typedef void (APIENTRYP PFNGLUNIFORM2IVPROC) (GLint location, GLsizei count, const GLint *value);
 typedef void (APIENTRYP PFNGLUNIFORM3IVPROC) (GLint location, GLsizei count, const GLint *value);
@@ -188,6 +196,12 @@ typedef void (APIENTRYP PFNGLUNIFORM3UIVPROC) (GLint location, GLsizei count, co
 typedef void (APIENTRYP PFNGLUNIFORM4UIVPROC) (GLint location, GLsizei count, const GLuint *value);
 typedef void (APIENTRYP PFNGLUNIFORMMATRIX3FVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 typedef void (APIENTRYP PFNGLUNIFORMMATRIX4FVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX3X4FVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX4X3FVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX3DVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLdouble *value);
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX4DVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLdouble *value);
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX3X4DVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLdouble *value);
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX4X3DVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLdouble *value);
 typedef void (APIENTRYP PFNGLVALIDATEPROGRAMPROC) (GLuint program);
 typedef void (APIENTRYP PFNGLVERTEXATTRIB4FVPROC) (GLuint index, const GLfloat *v);
 typedef void (APIENTRYP PFNGLVERTEXATTRIB4DVPROC) (GLuint index, const GLdouble *v);
@@ -218,6 +232,12 @@ typedef GLuint (APIENTRYP PFNGLGETUNIFORMBLOCKINDEXPROC) (GLuint program, const 
 typedef void (APIENTRYP PFNGLGETACTIVEUNIFORMBLOCKIVPROC) (GLuint program, GLuint uniformBlockIndex, GLenum pname, GLint *params);
 typedef void (APIENTRYP PFNGLGETACTIVEUNIFORMBLOCKNAMEPROC) (GLuint program, GLuint uniformBlockIndex, GLsizei bufSize, GLsizei *length, GLchar *uniformBlockName);
 typedef void (APIENTRYP PFNGLUNIFORMBLOCKBINDINGPROC) (GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding);
+typedef void (APIENTRYP PFNGLGETPROGRAMINTERFACEIVPROC) (GLuint program, GLenum programInterface, GLenum pname, GLint *params);
+typedef GLuint (APIENTRYP PFNGLGETPROGRAMRESOURCEINDEXPROC) (GLuint program, GLenum programInterface, const GLchar *name);
+typedef void (APIENTRYP PFNGLGETPROGRAMRESOURCENAMEPROC) (GLuint program, GLenum programInterface, GLuint index, GLsizei bufSize, GLsizei *length, GLchar *name);
+typedef void (APIENTRYP PFNGLGETPROGRAMRESOURCEIVPROC) (GLuint program, GLenum programInterface, GLuint index, GLsizei propCount, const GLenum *props, GLsizei count, GLsizei *length, GLint *params);
+typedef GLint (APIENTRYP PFNGLGETPROGRAMRESOURCELOCATIONPROC) (GLuint program, GLenum programInterface, const GLchar *name);
+typedef GLint (APIENTRYP PFNGLGETPROGRAMRESOURCELOCATIONINDEXPROC) (GLuint program, GLenum programInterface, const GLchar *name);
 typedef void (APIENTRYP PFNGLGENSAMPLERSPROC) (GLsizei count, GLuint *samplers);
 typedef void (APIENTRYP PFNGLDELETESAMPLERSPROC) (GLsizei count, const GLuint *samplers);
 typedef void (APIENTRYP PFNGLBINDSAMPLERPROC) (GLuint unit, GLuint sampler);
@@ -290,7 +310,7 @@ public:
 
   static void APIENTRY debug_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, GLvoid *userParam);
 
-  INLINE virtual void push_group_marker(const std::string &marker) final;
+  INLINE virtual void push_group_marker(std::string_view marker) final;
   INLINE virtual void pop_group_marker() final;
 
   virtual void reset();
@@ -311,7 +331,7 @@ public:
 
   virtual bool begin_draw_primitives(const GeomPipelineReader *geom_reader,
                                      const GeomVertexDataPipelineReader *data_reader,
-                                     size_t num_instances, bool force);
+                                     const InstanceList *instances, bool force);
   virtual bool draw_triangles(const GeomPrimitivePipelineReader *reader,
                               bool force);
 #ifndef OPENGLES
@@ -361,6 +381,11 @@ public:
 #endif
 
   virtual GeomContext *prepare_geom(Geom *geom);
+#ifndef OPENGLES_1
+  bool update_transform_buffer(CLP(GeomContext) *ggc, const TransformTable *table);
+  bool apply_transform_buffer(GLuint base, const GeomPipelineReader *geom_reader,
+                              const TransformTable *table);
+#endif
   virtual void release_geom(GeomContext *gc);
 
   virtual ShaderContext *prepare_shader(Shader *shader);
@@ -394,7 +419,7 @@ public:
                        const GeomPrimitivePipelineReader *reader,
                        bool force);
 
-#ifndef OPENGLES
+#ifndef OPENGLES_1
   virtual BufferContext *prepare_shader_buffer(ShaderBuffer *data);
   CLP(BufferContext) *apply_shader_buffer(GLuint base, ShaderBuffer *buffer);
   virtual void release_shader_buffer(BufferContext *bc);
@@ -467,12 +492,15 @@ public:
 
   virtual void set_state_and_transform(const RenderState *state,
                                        const TransformState *transform);
+  virtual bool state_supports_instancing() const;
 
   void bind_fbo(GLuint fbo);
-  virtual bool get_supports_cg_profile(const std::string &name) const;
   void finish();
 
 protected:
+#ifndef OPENGLES_1
+  void do_issue_instances();
+#endif
   void do_issue_transform();
   void do_issue_render_mode();
   void do_issue_antialias();
@@ -514,18 +542,18 @@ protected:
   static bool report_errors_loop(int line, const char *source_file,
                                  GLenum error_code, int &error_count);
   static std::string get_error_string(GLenum error_code);
-  std::string show_gl_string(const std::string &name, GLenum id);
+  std::string show_gl_string(std::string_view name, GLenum id);
   virtual void query_gl_version();
   void query_glsl_version();
   void save_extensions(const char *extensions);
   virtual void get_extra_extensions();
   void report_extensions() const;
-  INLINE virtual bool has_extension(const std::string &extension) const;
+  INLINE virtual bool has_extension(std::string_view extension) const;
   INLINE bool is_at_least_gl_version(int major_version, int minor_version) const;
   INLINE bool is_at_least_gles_version(int major_version, int minor_version) const;
+  bool get_mesa_version(int &major_version, int &minor_version, int &patch_version) const;
   void *get_extension_func(const char *name);
   virtual void *do_get_extension_func(const char *name);
-  virtual bool may_support_cg_shaders();
 
   virtual void reissue_transforms();
 
@@ -540,12 +568,6 @@ protected:
   virtual void begin_bind_clip_planes();
   virtual void bind_clip_plane(const NodePath &plane, int plane_id);
   virtual void end_bind_clip_planes();
-#endif
-
-  virtual void free_pointers();
-
-#if defined(HAVE_CG) && !defined(OPENGLES)
-  CGcontext get_cg_context();
 #endif
 
 #ifndef OPENGLES_1
@@ -682,6 +704,7 @@ protected:
   void *map_read_buffer(GLenum target, GLuint buffer, size_t size);
   void *map_write_discard_buffer(GLenum target, GLuint buffer, size_t size,
                                  bool create_storage);
+  void unmap_buffer(GLenum target, GLuint buffer);
 #endif
 
 #ifndef OPENGLES_1
@@ -741,11 +764,11 @@ protected:
   GLuint _vertex_attrib_divisors[32];
 
   PT(Shader) _current_shader;
-  ShaderContext *_current_shader_context;
+  CLP(ShaderContext) *_current_shader_context;
   PT(Shader) _vertex_array_shader;
-  ShaderContext *_vertex_array_shader_context;
+  CLP(ShaderContext) *_vertex_array_shader_context;
   PT(Shader) _texture_binding_shader;
-  ShaderContext *_texture_binding_shader_context;
+  CLP(ShaderContext) *_texture_binding_shader_context;
 
   PT(Shader) _default_shader;
 
@@ -755,12 +778,6 @@ protected:
 #endif
 
   GLfloat _max_line_width;
-
-#if defined(HAVE_CG) && !defined(OPENGLES)
-  CGcontext _cg_context;
-  static AtomicAdjust::Integer _num_gsgs_with_cg_contexts;
-  static small_vector<CGcontext> _destroyed_cg_contexts;
-#endif
 
 #ifdef SUPPORT_IMMEDIATE_MODE
   CLP(ImmediateModeSender) _sender;
@@ -795,6 +812,9 @@ protected:
   int _max_vertex_attrib_stride = INT_MAX;
 #endif
 
+  GLuint _current_ubuffer_index;
+  pvector<GLuint> _current_ubuffer_base;
+
   GLuint _current_sbuffer_index;
   pvector<GLuint> _current_sbuffer_base;
 #endif
@@ -820,10 +840,9 @@ protected:
   std::string _gl_renderer;
   std::string _gl_version;
   int _gl_version_major, _gl_version_minor;
-  // #--- Zhao Nov2011
-  int _gl_shadlang_ver_major, _gl_shadlang_ver_minor;
+  int _glsl_version = 0;
 
-  pset<std::string> _extensions;
+  pset<std::string, std::less<>> _extensions;
 
 #ifndef OPENGLES
   // True for non-compatibility GL 3.2+ contexts.
@@ -1026,6 +1045,7 @@ public:
   PFNGLGENERATETEXTUREMIPMAPPROC _glGenerateTextureMipmap;
   PFNGLBINDTEXTUREUNITPROC _glBindTextureUnit;
   PFNGLMAPNAMEDBUFFERRANGEPROC _glMapNamedBufferRange;
+  PFNGLUNMAPNAMEDBUFFERPROC _glUnmapNamedBuffer;
   PFNGLNAMEDBUFFERSUBDATAPROC _glNamedBufferSubData;
   PFNGLCLEARNAMEDBUFFERSUBDATAPROC _glClearNamedBufferSubData;
   PFNGLCOPYNAMEDBUFFERSUBDATAPROC _glCopyNamedBufferSubData;
@@ -1103,8 +1123,11 @@ public:
   PFNGLGETSHADERINFOLOGPROC _glGetShaderInfoLog;
   PFNGLGETUNIFORMLOCATIONPROC _glGetUniformLocation;
   PFNGLLINKPROGRAMPROC _glLinkProgram;
+  PFNGLSPECIALIZESHADERARBPROC _glSpecializeShader;
+  PFNGLSHADERBINARYPROC _glShaderBinary;
   PFNGLSHADERSOURCEPROC_P _glShaderSource;
   PFNGLUSEPROGRAMPROC  _glUseProgram;
+  PFNGLUNIFORM1FPROC _glUniform1f;
   PFNGLUNIFORM4FPROC _glUniform4f;
   PFNGLUNIFORM1IPROC _glUniform1i;
   PFNGLUNIFORM1FVPROC _glUniform1fv;
@@ -1121,6 +1144,8 @@ public:
   PFNGLUNIFORM4UIVPROC _glUniform4uiv;
   PFNGLUNIFORMMATRIX3FVPROC _glUniformMatrix3fv;
   PFNGLUNIFORMMATRIX4FVPROC _glUniformMatrix4fv;
+  PFNGLUNIFORMMATRIX3X4FVPROC _glUniformMatrix3x4fv;
+  PFNGLUNIFORMMATRIX4X3FVPROC _glUniformMatrix4x3fv;
   PFNGLVALIDATEPROGRAMPROC _glValidateProgram;
   PFNGLVERTEXATTRIB4FVPROC _glVertexAttrib4fv;
   PFNGLVERTEXATTRIB4DVPROC _glVertexAttrib4dv;
@@ -1156,6 +1181,16 @@ public:
   PFNGLBINDIMAGETEXTUREPROC _glBindImageTexture;
 #endif  // !OPENGLES_1
 #ifndef OPENGLES
+  PFNGLUNIFORM1DPROC _glUniform1d;
+  PFNGLUNIFORM4DPROC _glUniform4d;
+  PFNGLUNIFORM1DVPROC _glUniform1dv;
+  PFNGLUNIFORM2DVPROC _glUniform2dv;
+  PFNGLUNIFORM3DVPROC _glUniform3dv;
+  PFNGLUNIFORM4DVPROC _glUniform4dv;
+  PFNGLUNIFORMMATRIX3DVPROC _glUniformMatrix3dv;
+  PFNGLUNIFORMMATRIX4DVPROC _glUniformMatrix4dv;
+  PFNGLUNIFORMMATRIX3X4DVPROC _glUniformMatrix3x4dv;
+  PFNGLUNIFORMMATRIX4X3DVPROC _glUniformMatrix4x3dv;
   PFNGLBINDVERTEXBUFFERSPROC _glBindVertexBuffers;
   PFNGLPATCHPARAMETERIPROC _glPatchParameteri;
   PFNGLBINDTEXTURESPROC _glBindTextures;
@@ -1170,11 +1205,17 @@ public:
   PFNGLMAKETEXTUREHANDLENONRESIDENTPROC _glMakeTextureHandleNonResident;
   PFNGLUNIFORMHANDLEUI64PROC _glUniformHandleui64;
   PFNGLUNIFORMHANDLEUI64VPROC _glUniformHandleui64v;
-  PFNGLGETPROGRAMINTERFACEIVPROC _glGetProgramInterfaceiv;
-  PFNGLGETPROGRAMRESOURCENAMEPROC _glGetProgramResourceName;
-  PFNGLGETPROGRAMRESOURCEIVPROC _glGetProgramResourceiv;
   PFNGLSHADERSTORAGEBLOCKBINDINGPROC _glShaderStorageBlockBinding;
 #endif  // !OPENGLES
+
+#ifndef OPENGLES_1
+  PFNGLGETPROGRAMINTERFACEIVPROC _glGetProgramInterfaceiv;
+  PFNGLGETPROGRAMRESOURCEINDEXPROC _glGetProgramResourceIndex;
+  PFNGLGETPROGRAMRESOURCENAMEPROC _glGetProgramResourceName;
+  PFNGLGETPROGRAMRESOURCEIVPROC _glGetProgramResourceiv;
+
+  bool _supports_program_interface_query;
+#endif
 
 #ifndef OPENGLES_1
   PFNGLFENCESYNCPROC _glFenceSync;
@@ -1195,8 +1236,12 @@ public:
   bool _supports_texture_max_level;
 
 #ifndef OPENGLES_1
-  GLsizei _sattr_instance_count;
   GLsizei _instance_count;
+
+  GLuint _instance_buffer = 0;
+  size_t _instance_buffer_size = 0;
+
+  const InstanceList *_state_instances = nullptr;
 #endif
 
   LightMutex _lock;
@@ -1223,6 +1268,7 @@ public:
   int _texture_fetch_barrier_counter = 0;
   int _shader_image_access_barrier_counter = 0;
   int _texture_update_barrier_counter = 0;
+  int _buffer_update_barrier_counter = 0;
   int _framebuffer_barrier_counter = 0;
   int _shader_storage_barrier_counter = 0;
 #endif
@@ -1332,7 +1378,6 @@ private:
   friend class CLP(IndexBufferContext);
   friend class CLP(BufferContext);
   friend class CLP(ShaderContext);
-  friend class CLP(CgShaderContext);
   friend class CLP(TextureContext);
   friend class CLP(GraphicsBuffer);
   friend class CLP(OcclusionQueryContext);

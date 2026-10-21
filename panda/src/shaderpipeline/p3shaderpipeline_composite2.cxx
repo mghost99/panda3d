@@ -1,0 +1,15 @@
+#ifndef CPPPARSER
+#include "spirVConvertBoolToIntPass.cxx"
+#include "spirVEmulateTextureQueriesPass.cxx"
+#include "spirVDebugOutputPass.cxx"
+#include "spirVFlattenStructPass.cxx"
+#include "spirVHoistStructResourcesPass.cxx"
+#include "spirVInjectAlphaTestPass.cxx"
+#include "spirVInjectVertexTransformPass.cxx"
+#include "spirVMakeBlockPass.cxx"
+#include "spirVRemoveUnusedVariablesPass.cxx"
+#include "spirVReplaceVariableTypePass.cxx"
+#include "spirVResultDatabase.cxx"
+#include "spirVTransformer.cxx"
+#include "spirVTransformPass.cxx"
+#endif

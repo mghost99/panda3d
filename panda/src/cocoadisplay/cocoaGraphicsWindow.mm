@@ -57,13 +57,13 @@ enum {
  */
 CocoaGraphicsWindow::
 CocoaGraphicsWindow(GraphicsEngine *engine, GraphicsPipe *pipe,
-                    const std::string &name,
+                    std::string name,
                     const FrameBufferProperties &fb_prop,
                     const WindowProperties &win_prop,
                     int flags,
                     GraphicsStateGuardian *gsg,
                     GraphicsOutput *host) :
-  GraphicsWindow(engine, pipe, name, fb_prop, win_prop, flags, gsg, host)
+  GraphicsWindow(engine, pipe, std::move(name), fb_prop, win_prop, flags, gsg, host)
 {
   _window = nil;
   _view = nil;
@@ -425,6 +425,14 @@ open_window() {
     if (_window == nil) {
       cocoadisplay_cat.error()
         << "Failed to create Cocoa window.\n";
+      return false;
+    }
+
+    if ([_window screen] == nil) {
+      cocoadisplay_cat.error()
+        << "No screen available for Cocoa window.\n";
+      [_window close];
+      _window = nil;
       return false;
     }
   }
@@ -1017,6 +1025,15 @@ unbind_context() {
 }
 
 /**
+ * Returns the window's backing scale factor.
+ */
+CGFloat CocoaGraphicsWindow::
+get_backing_scale_factor() const {
+  // This is Objective-C code so we can't put it in the .I file.
+  return _window.backingScaleFactor;
+}
+
+/**
  * Returns an appropriate CGDisplayModeRef for the given width and height, or
  * NULL if none was found.
  */
@@ -1561,36 +1578,12 @@ handle_close_event() {
 
   _window = nil;
 
-  // Get rid of the GSG
-  if (_gsg != nullptr) {
-    unbind_context();
-    _gsg.clear();
-  }
-
-  // Dump the view, too
-  if (_view != nil) {
-    [_view release];
-    _view = nil;
-  }
-
-  // Unhide the mouse cursor
-  if (_mouse_hidden) {
-    [NSCursor unhide];
-    _mouse_hidden = false;
-  }
-
-  // Release the cursor.
-  if (_cursor != nil) {
-    [_cursor release];
-    _cursor = nil;
-  }
+  close_window();
 
   WindowProperties properties;
   properties.set_open(false);
   properties.set_cursor_hidden(false);
   system_changed_properties(properties);
-
-  GraphicsWindow::close_window();
 }
 
 /**
@@ -1838,8 +1831,8 @@ handle_mouse_moved_event(bool in_window, double x, double y, bool absolute) {
       && !in_window) {
     CGPoint point;
 
-    nx = std::max(0., std::min((double) get_x_size() - 1, nx));
-    ny = std::max(0., std::min((double) get_y_size() - 1, ny));
+    nx = std::clamp(nx, 0., (double) get_x_size() - 1);
+    ny = std::clamp(ny, 0., (double) get_y_size() - 1);
 
     // Convert back mouse position to screen space using point units
     if (_properties.get_fullscreen()) {

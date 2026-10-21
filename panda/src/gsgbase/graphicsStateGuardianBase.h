@@ -54,6 +54,7 @@ class GeomLines;
 class GeomLinestrips;
 class GeomPoints;
 class GeomMunger;
+class InstanceList;
 
 class SceneSetup;
 class PreparedGraphicsObjects;
@@ -125,7 +126,9 @@ PUBLISHED:
   virtual int get_max_texture_dimension() const=0;
   virtual bool get_supports_compressed_texture_format(int compression_mode) const=0;
 
+  virtual bool get_supports_fixed_function_vertex_blending() const=0;
   virtual bool get_supports_multisample() const=0;
+  virtual uint64_t get_supported_shader_capabilities() const=0;
   virtual int get_supported_geom_rendering() const=0;
   virtual bool get_supports_shadow_filter() const=0;
 
@@ -189,6 +192,8 @@ public:
   virtual void set_state_and_transform(const RenderState *state,
                                        const TransformState *transform)=0;
 
+  virtual bool state_supports_instancing() const=0;
+
   // This function may only be called during a render traversal; it will
   // compute the distance to the indicated point, assumed to be in eye
   // coordinates, from the camera plane.  This is a virtual function because
@@ -213,7 +218,7 @@ public:
 
   virtual bool begin_draw_primitives(const GeomPipelineReader *geom_reader,
                                      const GeomVertexDataPipelineReader *data_reader,
-                                     size_t num_instances, bool force)=0;
+                                     const InstanceList *instances, bool force)=0;
   virtual bool draw_triangles(const GeomPrimitivePipelineReader *reader, bool force)=0;
   virtual bool draw_triangles_adj(const GeomPrimitivePipelineReader *reader, bool force)=0;
   virtual bool draw_tristrips(const GeomPrimitivePipelineReader *reader, bool force)=0;
@@ -233,6 +238,7 @@ public:
   (Texture *tex, int view, int z, const DisplayRegion *dr, const RenderBuffer &rb,
    ScreenshotRequest *request = nullptr)=0;
 
+  INLINE CoordinateSystem get_coordinate_system() const { return _coordinate_system; }
   virtual CoordinateSystem get_internal_coordinate_system() const=0;
 
   virtual void bind_light(PointLight *light_obj, const NodePath &light,
@@ -245,12 +251,10 @@ public:
   virtual void ensure_generated_shader(const RenderState *state)=0;
 
   static void mark_rehash_generated_shaders() {
-#ifdef HAVE_CG
     ++_generated_shader_seq;
-#endif
   }
 
-  virtual void push_group_marker(const std::string &marker) {}
+  virtual void push_group_marker(std::string_view marker) {}
   virtual void pop_group_marker() {}
 
 PUBLISHED:
@@ -266,6 +270,7 @@ public:
   static void remove_gsg(GraphicsStateGuardianBase *gsg);
 
   size_t _id;
+  size_t _max_vertex_shader_parameter_vectors = 0;
 
 private:
   struct GSGList {
@@ -279,6 +284,8 @@ private:
 
 protected:
   static UpdateSeq _generated_shader_seq;
+
+  CoordinateSystem _coordinate_system = CS_invalid;
 
 public:
   static TypeHandle get_class_type() {

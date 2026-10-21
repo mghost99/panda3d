@@ -156,12 +156,12 @@ PUBLISHED:
   virtual void output(std::ostream &out) const;
 
   static Filename make_screenshot_filename(
-    const std::string &prefix = "screenshot");
-  Filename save_screenshot_default(const std::string &prefix = "screenshot");
+    std::string_view prefix = "screenshot");
+  Filename save_screenshot_default(std::string_view prefix = "screenshot");
   bool save_screenshot(
-    const Filename &filename, const std::string &image_comment = "");
+    const Filename &filename, std::string image_comment = "");
   bool get_screenshot(PNMImage &image);
-  PT(Texture) get_screenshot();
+  PT(Texture) get_screenshot(Thread *current_thread = Thread::get_current_thread());
 
   void clear_cull_result();
   virtual PT(PandaNode) make_cull_result_graph();

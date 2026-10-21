@@ -22,10 +22,9 @@
 #include "config_putil.h"
 #include "bamCache.h"
 #include "string_utils.h"
-
-#ifdef HAVE_CG
-#include <Cg/cg.h>
-#endif
+#include "shaderCompilerRegistry.h"
+#include "shaderCompiler.h"
+#include "shaderInputBinding.h"
 
 using std::istream;
 using std::ostream;
@@ -35,3417 +34,27 @@ using std::string;
 TypeHandle Shader::_type_handle;
 Shader::ShaderTable Shader::_load_table;
 Shader::ShaderTable Shader::_make_table;
-Shader::ShaderCaps Shader::_default_caps;
 int Shader::_shaders_generated;
 
-#ifdef HAVE_CG
-CGcontext Shader::_cg_context = 0;
-#endif
-
 /**
- * Generate an error message including a description of the specified
- * parameter.
+ * Determine whether the source file hints at being a Cg shader
  */
-void Shader::
-cp_report_error(ShaderArgInfo &p, const string &msg) {
-
-  string vstr;
-  if (p._varying) {
-    vstr = "varying ";
-  } else {
-    vstr = "uniform ";
-  }
-
-  string dstr = "unknown ";
-  if (p._direction == SAD_in) {
-    dstr = "in ";
-  } else if (p._direction == SAD_out) {
-    dstr = "out ";
-  } else if (p._direction == SAD_inout) {
-    dstr = "inout ";
-  }
-
-  string tstr = "invalid ";
-  switch (p._type) {
-  case SAT_scalar:    tstr = "scalar "; break;
-  case SAT_vec1:      tstr = "vec1 "; break;
-  case SAT_vec2:      tstr = "vec2 "; break;
-  case SAT_vec3:      tstr = "vec3 "; break;
-  case SAT_vec4:      tstr = "vec4 "; break;
-  case SAT_mat1x1:    tstr = "mat1x1 "; break;
-  case SAT_mat1x2:    tstr = "mat1x2 "; break;
-  case SAT_mat1x3:    tstr = "mat1x3 "; break;
-  case SAT_mat1x4:    tstr = "mat1x4 "; break;
-  case SAT_mat2x1:    tstr = "mat2x1 "; break;
-  case SAT_mat2x2:    tstr = "mat2x2 "; break;
-  case SAT_mat2x3:    tstr = "mat2x3 "; break;
-  case SAT_mat2x4:    tstr = "mat2x4 "; break;
-  case SAT_mat3x1:    tstr = "mat3x1 "; break;
-  case SAT_mat3x2:    tstr = "mat3x2 "; break;
-  case SAT_mat3x3:    tstr = "mat3x3 "; break;
-  case SAT_mat3x4:    tstr = "mat3x4 "; break;
-  case SAT_mat4x1:    tstr = "mat4x1 "; break;
-  case SAT_mat4x2:    tstr = "mat4x2 "; break;
-  case SAT_mat4x3:    tstr = "mat4x3 "; break;
-  case SAT_mat4x4:    tstr = "mat4x4 "; break;
-  case SAT_sampler1d: tstr = "sampler1D "; break;
-  case SAT_sampler2d: tstr = "sampler2D "; break;
-  case SAT_sampler3d: tstr = "sampler3D "; break;
-  case SAT_sampler2d_array:   tstr = "sampler2DARRAY "; break;
-  case SAT_sampler_cube:      tstr = "samplerCUBE "; break;
-  case SAT_sampler_buffer:    tstr = "samplerBUF "; break;
-  case SAT_sampler_cube_array:tstr = "samplerCUBEARRAY "; break;
-  case SAT_sampler1d_array:   tstr = "sampler1DARRAY "; break;
-  default:                    tstr = "unknown "; break;
-  }
-
-  string cstr = "invalid";
-  switch (p._class) {
-  case SAC_scalar:  cstr = "scalar ";  break;
-  case SAC_vector:  cstr = "vector ";  break;
-  case SAC_matrix:  cstr = "matrix ";  break;
-  case SAC_sampler: cstr = "sampler "; break;
-  case SAC_array:   cstr = "array ";   break;
-  default:          cstr = "unknown "; break;
-  }
-
-  Filename fn = get_filename(p._id._type);
-  p._cat->error() << fn << ": " << vstr << dstr << tstr <<
-    p._id._name << ": " << msg << "\n";
+static bool has_cg_header(const std::string &shader_text) {
+  size_t newline_pos = shader_text.find('\n');
+  std::string search_str = shader_text.substr(0, newline_pos);
+  return search_str.rfind("//Cg") != std::string::npos;
 }
-
-/**
- * Make sure the provided parameter contains the specified number of words.
- * If not, print error message and return false.
- */
-bool Shader::
-cp_errchk_parameter_words(ShaderArgInfo &p, int len)
-{
-  vector_string words;
-  tokenize(p._id._name, words, "_");
-  if ((int)words.size() != len) {
-    cp_report_error(p, "parameter name has wrong number of words");
-    return false;
-  }
-  return true;
-}
-
-/**
- * Make sure the provided parameter has the 'in' direction.  If not, print
- * error message and return false.
- */
-bool Shader::
-cp_errchk_parameter_in(ShaderArgInfo &p)
-{
-  if (p._direction != SAD_in) {
-    cp_report_error(p, "parameter should be declared 'in'");
-    return false;
-  }
-  return true;
-}
-
-/**
- * Make sure the provided parameter has the correct variance.  If not, print
- * error message and return false.
- */
-bool Shader::
-cp_errchk_parameter_varying(ShaderArgInfo &p)
-{
-  if (!p._varying) {
-    cp_report_error(p, "parameter should be declared 'varying'");
-    return false;
-  }
-  return true;
-}
-
-/**
- * Make sure the provided parameter has the correct variance.  If not, print
- * error message and return false.
- */
-bool Shader::
-cp_errchk_parameter_uniform(ShaderArgInfo &p)
-{
-  if (p._varying) {
-    cp_report_error(p, "parameter should be declared 'uniform'");
-    return false;
-  }
-  return true;
-}
-
-/**
- * Make sure the provided parameter has a floating point type.  If not, print
- * error message and return false.
- */
-bool Shader::
-cp_errchk_parameter_float(ShaderArgInfo &p, int lo, int hi)
-{
-  int nfloat;
-  switch (p._type) {
-  case SAT_scalar: nfloat = 1; break;
-  case SAT_vec2: nfloat = 2; break;
-  case SAT_vec3: nfloat = 3; break;
-  case SAT_vec4: nfloat = 4; break;
-  case SAT_mat3x3: nfloat = 9; break;
-  case SAT_mat4x4: nfloat = 16; break;
-  default: nfloat = 0; break;
-  }
-  if ((nfloat < lo)||(nfloat > hi)) {
-    string msg = "wrong type for parameter:";
-    cp_report_error(p, msg);
-    return false;
-  }
-  return true;
-}
-
-/**
- *
- */
-bool Shader::
-cp_errchk_parameter_ptr(ShaderArgInfo &p) {
-  switch (p._class) {
-  case SAC_scalar: return true;
-  case SAC_vector: return true;
-  case SAC_matrix: return true;
-  case SAC_array:
-    switch (p._subclass) {
-    case SAC_scalar: return true;
-    case SAC_vector: return true;
-    case SAC_matrix: return true;
-    default:
-      string msg = "unsupported array subclass.";
-      cp_report_error(p, msg);
-      return false;
-    }
-  default:
-    string msg = "unsupported class.";
-    cp_report_error(p,msg);
-    return false;
-  }
-}
-
-/**
- * Make sure the provided parameter has a texture type.  If not, print error
- * message and return false.
- */
-bool Shader::
-cp_errchk_parameter_sampler(ShaderArgInfo &p) {
-  if (p._type != SAT_sampler1d &&
-      p._type != SAT_sampler2d &&
-      p._type != SAT_sampler3d &&
-      p._type != SAT_sampler2d_array &&
-      p._type != SAT_sampler_cube &&
-      p._type != SAT_sampler_buffer &&
-      p._type != SAT_sampler_cube_array &&
-      p._type != SAT_sampler1d_array) {
-    cp_report_error(p, "parameter should have a 'sampler' type");
-    return false;
-  }
-  return true;
-}
-
-/**
- * Make sure the next thing on the word list is EOL
- */
-bool Shader::
-cp_parse_eol(ShaderArgInfo &p, vector_string &words, int &next) {
-  if (words[next] != "") {
-    cp_report_error(p, "Too many words in parameter");
-    return false;
-  }
-  return true;
-}
-
-/**
- * Pop a delimiter ('to' or 'rel') from the word list.
- */
-bool Shader::
-cp_parse_delimiter(ShaderArgInfo &p, vector_string &words, int &next) {
-  if ((words[next] != "to")&&(words[next] != "rel")) {
-    cp_report_error(p, "Keyword 'to' or 'rel' expected");
-    return false;
-  }
-  next += 1;
-  return true;
-}
-
-/**
- * Pop a non-delimiter word from the word list.  Delimiters are 'to' and
- * 'rel.'
- */
-string Shader::
-cp_parse_non_delimiter(vector_string &words, int &next) {
-  const string &nword = words[next];
-  if ((nword == "")||(nword == "to")||(nword == "rel")) {
-    return "";
-  }
-  next += 1;
-  return nword;
-}
-
-/**
- * Convert a single-word coordinate system name into a PART/ARG of a
- * ShaderMatSpec.
- */
-bool Shader::
-cp_parse_coord_sys(ShaderArgInfo &p,
-                   vector_string &pieces, int &next,
-                   ShaderMatSpec &bind, bool fromflag) {
-
-  string word1 = cp_parse_non_delimiter(pieces, next);
-  if (pieces[next] == "of") next++;
-  string word2 = cp_parse_non_delimiter(pieces, next);
-
-  ShaderMatInput from_single;
-  ShaderMatInput from_double;
-  ShaderMatInput to_single;
-  ShaderMatInput to_double;
-
-  if (word1 == "") {
-    cp_report_error(p, "Could not parse coordinate system name");
-    return false;
-  } else if (word1 == "world") {
-    from_single = SMO_world_to_view;
-    from_double = SMO_INVALID;
-    to_single   = SMO_view_to_world;
-    to_double   = SMO_INVALID;
-  } else if (word1 == "model") {
-    from_single = SMO_model_to_view;
-    from_double = SMO_view_x_to_view;
-    to_single   = SMO_view_to_model;
-    to_double   = SMO_view_to_view_x;
-  } else if (word1 == "clip") {
-    from_single = SMO_clip_to_view;
-    from_double = SMO_clip_x_to_view;
-    to_single   = SMO_view_to_clip;
-    to_double   = SMO_view_to_clip_x;
-  } else if (word1 == "view") {
-    from_single = SMO_identity;
-    from_double = SMO_view_x_to_view;
-    to_single   = SMO_identity;
-    to_double   = SMO_view_to_view_x;
-  } else if (word1 == "apiview") {
-    from_single = SMO_apiview_to_view;
-    from_double = SMO_apiview_x_to_view;
-    to_single   = SMO_view_to_apiview;
-    to_double   = SMO_view_to_apiview_x;
-  } else if (word1 == "apiclip") {
-    from_single = SMO_apiclip_to_view;
-    from_double = SMO_apiclip_x_to_view;
-    to_single   = SMO_view_to_apiclip;
-    to_double   = SMO_view_to_apiclip_x;
-  } else {
-    from_single = SMO_view_x_to_view;
-    from_double = SMO_view_x_to_view;
-    to_single   = SMO_view_to_view_x;
-    to_double   = SMO_view_to_view_x;
-    word2 = word1;
-  }
-
-  if (fromflag) {
-    if (word2 == "") {
-      bind._part[0] = from_single;
-      bind._arg[0] = nullptr;
-    } else {
-      if (from_double == SMO_INVALID) {
-        cp_report_error(p, "Could not parse coordinate system name");
-        return false;
-      }
-      bind._part[0] = from_double;
-      bind._arg[0] = InternalName::make(word2);
-    }
-  } else {
-    if (word2 == "") {
-      bind._part[1] = to_single;
-      bind._arg[1] = nullptr;
-    } else {
-      if (to_double == SMO_INVALID) {
-        cp_report_error(p, "Could not parse coordinate system name");
-        return false;
-      }
-      bind._part[1] = to_double;
-      bind._arg[1] = InternalName::make(word2);
-    }
-  }
-  return true;
-}
-
-/**
- * Given ShaderMatInput, returns an indication of what part or parts of the
- * state_and_transform the ShaderMatInput depends upon.
- */
-int Shader::
-cp_dependency(ShaderMatInput inp) {
-
-  int dep = SSD_general;
-
-  if (inp == SMO_INVALID) {
-    return SSD_NONE;
-  }
-  if (inp == SMO_attr_material) {
-    dep |= SSD_material | SSD_frame;
-  }
-  if (inp == SMO_attr_color) {
-    dep |= SSD_color;
-  }
-  if (inp == SMO_attr_colorscale) {
-    dep |= SSD_colorscale;
-  }
-  if (inp == SMO_attr_fog) {
-    dep |= SSD_fog | SSD_frame;
-  }
-  if ((inp == SMO_model_to_view) ||
-      (inp == SMO_view_to_model) ||
-      (inp == SMO_model_to_apiview) ||
-      (inp == SMO_apiview_to_model)) {
-    dep |= SSD_transform;
-  }
-  if ((inp == SMO_view_to_world) ||
-      (inp == SMO_world_to_view) ||
-      (inp == SMO_view_x_to_view) ||
-      (inp == SMO_view_to_view_x) ||
-      (inp == SMO_apiview_x_to_view) ||
-      (inp == SMO_view_to_apiview_x) ||
-      (inp == SMO_clip_x_to_view) ||
-      (inp == SMO_view_to_clip_x) ||
-      (inp == SMO_apiclip_x_to_view) ||
-      (inp == SMO_view_to_apiclip_x) ||
-      (inp == SMO_dlight_x) ||
-      (inp == SMO_plight_x) ||
-      (inp == SMO_slight_x)) {
-    dep |= SSD_view_transform;
-  }
-  if ((inp == SMO_texpad_x) ||
-      (inp == SMO_texpix_x) ||
-      (inp == SMO_alight_x) ||
-      (inp == SMO_dlight_x) ||
-      (inp == SMO_plight_x) ||
-      (inp == SMO_slight_x) ||
-      (inp == SMO_satten_x) ||
-      (inp == SMO_mat_constant_x) ||
-      (inp == SMO_mat_constant_x_attrib) ||
-      (inp == SMO_vec_constant_x) ||
-      (inp == SMO_vec_constant_x_attrib) ||
-      (inp == SMO_view_x_to_view) ||
-      (inp == SMO_view_to_view_x) ||
-      (inp == SMO_apiview_x_to_view) ||
-      (inp == SMO_view_to_apiview_x) ||
-      (inp == SMO_clip_x_to_view) ||
-      (inp == SMO_view_to_clip_x) ||
-      (inp == SMO_apiclip_x_to_view) ||
-      (inp == SMO_view_to_apiclip_x)) {
-    dep |= SSD_shaderinputs;
-
-    if ((inp == SMO_texpad_x) ||
-        (inp == SMO_texpix_x) ||
-        (inp == SMO_alight_x) ||
-        (inp == SMO_dlight_x) ||
-        (inp == SMO_plight_x) ||
-        (inp == SMO_slight_x) ||
-        (inp == SMO_satten_x) ||
-        (inp == SMO_mat_constant_x) ||
-        (inp == SMO_mat_constant_x_attrib) ||
-        (inp == SMO_vec_constant_x_attrib) ||
-        (inp == SMO_view_x_to_view) ||
-        (inp == SMO_view_to_view_x) ||
-        (inp == SMO_apiview_x_to_view) ||
-        (inp == SMO_view_to_apiview_x) ||
-        (inp == SMO_clip_x_to_view) ||
-        (inp == SMO_view_to_clip_x) ||
-        (inp == SMO_apiclip_x_to_view) ||
-        (inp == SMO_view_to_apiclip_x)) {
-      // We can't track changes to these yet, so we have to assume that they
-      // are modified every frame.
-      dep |= SSD_frame;
-    }
-  }
-  if ((inp == SMO_light_ambient) ||
-      (inp == SMO_light_source_i) ||
-      (inp == SMO_apiview_to_apiclip_light_source_i) ||
-      (inp == SMO_light_source_i_packed)) {
-    dep |= SSD_light | SSD_frame;
-  }
-  if (inp == SMO_light_source_i ||
-      inp == SMO_apiview_to_apiclip_light_source_i ||
-      inp == SMO_light_source_i_packed ||
-      inp == SMO_mat_constant_x_attrib ||
-      inp == SMO_vec_constant_x_attrib) {
-    // Some light attribs (eg. position) need to be transformed to view space.
-    dep |= SSD_view_transform;
-  }
-  if ((inp == SMO_light_product_i_ambient) ||
-      (inp == SMO_light_product_i_diffuse) ||
-      (inp == SMO_light_product_i_specular)) {
-    dep |= (SSD_light | SSD_material);
-  }
-  if ((inp == SMO_clipplane_x) ||
-      (inp == SMO_apiview_clipplane_i)) {
-    dep |= SSD_clip_planes;
-  }
-  if (inp == SMO_texmat_i || inp == SMO_inv_texmat_i || inp == SMO_texscale_i) {
-    dep |= SSD_tex_matrix;
-  }
-  if ((inp == SMO_window_size) ||
-      (inp == SMO_pixel_size) ||
-      (inp == SMO_frame_number) ||
-      (inp == SMO_frame_time) ||
-      (inp == SMO_frame_delta)) {
-    dep |= SSD_frame;
-  }
-  if ((inp == SMO_clip_to_view) ||
-      (inp == SMO_view_to_clip) ||
-      (inp == SMO_apiclip_to_view) ||
-      (inp == SMO_view_to_apiclip) ||
-      (inp == SMO_apiview_to_apiclip) ||
-      (inp == SMO_apiclip_to_apiview)) {
-    dep |= SSD_projection;
-  }
-  if (inp == SMO_tex_is_alpha_i || inp == SMO_texcolor_i) {
-    dep |= SSD_texture | SSD_frame;
-  }
-  if (inp == SMO_texconst_i) {
-    dep |= SSD_tex_gen;
-  }
-  if (inp == SMO_attr_pointparams) {
-    dep |= SSD_render_mode | SSD_transform | SSD_frame;
-  }
-
-  return dep;
-}
-
-/**
- * Given ShaderMatInput, returns the size in the cache that this part requires.
- */
-int Shader::
-cp_size(ShaderMatInput inp) {
-  switch (inp) {
-  case SMO_INVALID:
-    return 0;
-
-  case SMO_window_size:
-  case SMO_pixel_size:
-  case SMO_texpad_x:
-  case SMO_texpix_x:
-  case SMO_attr_color:
-  case SMO_attr_colorscale:
-  case SMO_satten_x:
-  case SMO_plane_x:
-  case SMO_clipplane_x:
-  case SMO_vec_constant_x:
-  case SMO_frame_number:
-  case SMO_frame_time:
-  case SMO_frame_delta:
-  case SMO_vec_constant_x_attrib:
-  case SMO_light_ambient:
-  case SMO_light_product_i_ambient:
-  case SMO_light_product_i_diffuse:
-  case SMO_light_product_i_specular:
-  case SMO_apiview_clipplane_i:
-  case SMO_tex_is_alpha_i:
-  case SMO_texscale_i:
-  case SMO_texcolor_i:
-  case SMO_texconst_i:
-  case SMO_attr_pointparams:
-    return 1;
-
-  case SMO_identity:
-  case SMO_alight_x:
-  case SMO_dlight_x:
-  case SMO_plight_x:
-  case SMO_slight_x:
-  case SMO_texmat_i:
-  case SMO_mat_constant_x:
-  case SMO_world_to_view:
-  case SMO_view_to_world:
-  case SMO_model_to_view:
-  case SMO_view_to_model:
-  case SMO_apiview_to_view:
-  case SMO_view_to_apiview:
-  case SMO_clip_to_view:
-  case SMO_view_to_clip:
-  case SMO_apiclip_to_view:
-  case SMO_view_to_apiclip:
-  case SMO_view_x_to_view:
-  case SMO_view_to_view_x:
-  case SMO_apiview_x_to_view:
-  case SMO_view_to_apiview_x:
-  case SMO_clip_x_to_view:
-  case SMO_view_to_clip_x:
-  case SMO_apiclip_x_to_view:
-  case SMO_view_to_apiclip_x:
-  case SMO_mat_constant_x_attrib:
-  case SMO_apiview_to_apiclip_light_source_i:
-  case SMO_model_to_apiview:
-  case SMO_apiview_to_model:
-  case SMO_apiview_to_apiclip:
-  case SMO_apiclip_to_apiview:
-  case SMO_inv_texmat_i:
-  case SMO_light_source_i_packed:
-    return 4;
-
-  case SMO_attr_material:
-    return MA_COUNT;
-
-  case SMO_light_source_i:
-    return LA_COUNT;
-
-  case SMO_attr_fog:
-    return FA_COUNT;
-  }
-
-  nassertr(false, 0);
-  return 0;
-}
-
-/**
- * Adds the given ShaderMatSpec to the shader's mat spec table.
- */
-void Shader::
-cp_add_mat_spec(ShaderMatSpec &spec) {
-  // If we're composing with identity, simplify.
-
-  if (spec._func == SMF_first) {
-    spec._part[1] = SMO_INVALID;
-    spec._arg[1] = nullptr;
-  }
-  if (spec._func == SMF_compose) {
-    if (spec._part[1] == SMO_identity) {
-      spec._func = SMF_first;
-    }
-  }
-  if (spec._func == SMF_compose) {
-    if (spec._part[0] == SMO_identity) {
-      spec._func = SMF_first;
-      spec._part[0] = spec._part[1];
-      spec._arg[0] = spec._arg[1];
-    }
-
-    // More optimal combinations for common matrices.
-
-    if (spec._part[0] == SMO_model_to_view &&
-        spec._part[1] == SMO_view_to_apiclip) {
-      spec._part[0] = SMO_model_to_apiview;
-      spec._part[1] = SMO_apiview_to_apiclip;
-
-    } else if (spec._part[0] == SMO_apiclip_to_view &&
-               spec._part[1] == SMO_view_to_model) {
-      spec._part[0] = SMO_apiclip_to_apiview;
-      spec._part[1] = SMO_apiview_to_model;
-
-    } else if (spec._part[0] == SMO_apiview_to_view &&
-               spec._part[1] == SMO_view_to_apiclip) {
-      spec._func = SMF_first;
-      spec._part[0] = SMO_apiview_to_apiclip;
-      spec._part[1] = SMO_identity;
-
-    } else if (spec._part[0] == SMO_apiclip_to_view &&
-               spec._part[1] == SMO_view_to_apiview) {
-      spec._func = SMF_first;
-      spec._part[0] = SMO_apiclip_to_apiview;
-      spec._part[1] = SMO_identity;
-
-    } else if (spec._part[0] == SMO_apiview_to_view &&
-               spec._part[1] == SMO_view_to_model) {
-      spec._func = SMF_first;
-      spec._part[0] = SMO_apiview_to_model;
-      spec._part[1] = SMO_identity;
-
-    } else if (spec._part[0] == SMO_model_to_view &&
-               spec._part[1] == SMO_view_to_apiview) {
-      spec._func = SMF_first;
-      spec._part[0] = SMO_model_to_apiview;
-      spec._part[1] = SMO_identity;
-    }
-  }
-
-  // Determine which part is an array, for determining which one the count and
-  // index refer to.  (It can't be the case that both parts are arrays.)
-  int begin[2] = {0, 0};
-  int end[2] = {1, 1};
-  if (spec._index > 0 || spec._array_count > 1) {
-    for (int i = 0; i < 2; ++i) {
-      if (spec._part[i] == SMO_texmat_i ||
-          spec._part[i] == SMO_inv_texmat_i ||
-          spec._part[i] == SMO_light_source_i ||
-          spec._part[i] == SMO_apiview_to_apiclip_light_source_i ||
-          spec._part[i] == SMO_light_product_i_ambient ||
-          spec._part[i] == SMO_light_product_i_diffuse ||
-          spec._part[i] == SMO_light_product_i_specular ||
-          spec._part[i] == SMO_apiview_clipplane_i ||
-          spec._part[i] == SMO_tex_is_alpha_i ||
-          spec._part[i] == SMO_light_source_i_packed ||
-          spec._part[i] == SMO_texscale_i ||
-          spec._part[i] == SMO_texcolor_i) {
-        begin[i] = spec._index;
-        end[i] = spec._index + spec._array_count;
-      }
-    }
-    nassertv(end[0] == 1 || end[1] == 1);
-  }
-
-  // Make sure that we have a place in the part cache for both parts.
-  int num_parts = (spec._func != SMF_first) ? 2 : 1;
-
-  for (int p = 0; p < num_parts; ++p) {
-    if (spec._part[p] == SMO_INVALID) {
-      continue;
-    }
-    int dep = cp_dependency(spec._part[p]);
-    spec._dep |= dep;
-
-    // Do we already have a spot in the cache for this part?
-    size_t i;
-    size_t offset = 0;
-    for (i = 0; i < _mat_parts.size(); ++i) {
-      ShaderMatPart &part = _mat_parts[i];
-      if (part._part == spec._part[p] && part._arg == spec._arg[p]) {
-        if (spec._func != SMF_first) {
-          assert(part._size == 4);
-        }
-        int diff = end[p] - part._count;
-        if (diff <= 0) {
-          // The existing cache entry is big enough.
-          break;
-        } else {
-          // It's not big enough.  Enlarge it, which means we have to change the
-          // offset of some of the other spec entries.
-          for (ShaderMatSpec &spec : _mat_spec) {
-            if (spec._cache_offset[0] >= offset + part._size * part._count) {
-              spec._cache_offset[0] += diff * part._size;
-            }
-            if (spec._cache_offset[1] >= offset + part._size * part._count) {
-              spec._cache_offset[1] += diff * part._size;
-            }
-          }
-          part._count = end[p];
-          break;
-        }
-      }
-      offset += part._count * part._size;
-    }
-    int size = cp_size(spec._part[p]);
-    if (i == _mat_parts.size()) {
-      // Didn't find this part yet, create a new one.
-      ShaderMatPart part;
-      part._part = spec._part[p];
-      part._count = end[p];
-      part._arg = spec._arg[p];
-      part._dep = dep;
-      part._size = size;
-
-      if (spec._func != SMF_first) {
-        assert(part._size == 4);
-      }
-
-      _mat_cache_deps |= part._dep;
-      _mat_parts.push_back(std::move(part));
-    }
-    spec._cache_offset[p] = offset + begin[p] * size;
-  }
-  if (spec._func == SMF_shader_input_ptr) {
-    _mat_scratch_size = std::max(_mat_scratch_size, spec._array_count * ((spec._num_components + 3) / 4));
-
-    // We specify SSD_frame because a PTA may be modified by the app from
-    // frame to frame, and we have no way to know.  So, we must respecify a
-    // PTA at least once every frame.
-    spec._dep |= SSD_general | SSD_shaderinputs | SSD_frame;
-  }
-
-  _mat_spec.push_back(spec);
-  _mat_deps |= spec._dep;
-}
-
-/**
- * Returns the total size of the matrix part cache in terms of number of
- * vectors.
- */
-size_t Shader::
-cp_get_mat_cache_size() const {
-  size_t size = 0;
-  for (const ShaderMatPart &part : _mat_parts) {
-    size += part._size * part._count;
-  }
-  return size;
-}
-
-/**
- * Returns the total amount of scratch space required to fetch the largest
- * shader input of this shader.
- */
-size_t Shader::
-cp_get_mat_scratch_size() const {
-  return _mat_scratch_size;
-}
-
-#ifdef HAVE_CG
-/**
- *
- */
-void Shader::
-cg_recurse_parameters(CGparameter parameter, const ShaderType &type,
-                      bool &success) {
-
-  if (parameter == 0) {
-    return;
-  }
-
-  do {
-    if (cgIsParameterReferenced(parameter)) {
-      int                arg_dim[]    = {1,0,0};
-      ShaderArgDir       arg_dir      = cg_parameter_dir(parameter);
-      ShaderArgType      arg_type     = cg_parameter_type(parameter);
-      ShaderArgClass     arg_class    = cg_parameter_class(parameter);
-      ShaderArgClass     arg_subclass = arg_class;
-
-      CGenum vbl = cgGetParameterVariability(parameter);
-      CGtype base_type = cgGetParameterBaseType(parameter);
-
-      if ((vbl==CG_VARYING)||(vbl==CG_UNIFORM)) {
-        switch (cgGetParameterType(parameter)) {
-          case CG_STRUCT:
-            cg_recurse_parameters(
-              cgGetFirstStructParameter(parameter), type, success);
-            break;
-
-          case CG_ARRAY:
-            arg_type = cg_parameter_type(cgGetArrayParameter(parameter, 0));
-            arg_subclass = cg_parameter_class(cgGetArrayParameter(parameter, 0));
-
-            arg_dim[0]  = cgGetArraySize(parameter, 0);
-
-            // Fall through
-          default: {
-            arg_dim[1] = cgGetParameterRows(parameter);
-            arg_dim[2] = cgGetParameterColumns(parameter);
-
-            ShaderArgInfo p;
-            p._id._name   = cgGetParameterName(parameter);
-            p._id._type   = type;
-            p._id._seqno  = -1;
-            p._class      = arg_class;
-            p._subclass   = arg_subclass;
-            p._type       = arg_type;
-            p._direction  = arg_dir;
-            p._varying    = (vbl == CG_VARYING);
-            p._cat        = shader_cat.get_safe_ptr();
-
-            //NB. Cg does have a CG_DOUBLE type, but at least for the ARB
-            // profiles and GLSL profiles it just maps to float.
-            switch (base_type) {
-            case CG_UINT:
-            case CG_ULONG:
-            case CG_USHORT:
-            case CG_UCHAR:
-            case CG_BOOL:
-              p._numeric_type = SPT_uint;
-              break;
-            case CG_INT:
-            case CG_LONG:
-            case CG_SHORT:
-            case CG_CHAR:
-              p._numeric_type = SPT_int;
-              break;
-            default:
-              p._numeric_type = SPT_float;
-              break;
-            }
-
-            success &= compile_parameter(p, arg_dim);
-            break;
-          }
-        }
-      }
-    } else if (shader_cat.is_debug()) {
-      shader_cat.debug()
-        << "Parameter " << cgGetParameterName(parameter)
-        << " is unreferenced within shader " << get_filename(type) << "\n";
-    }
-  } while((parameter = cgGetNextParameter(parameter))!= 0);
-}
-#endif  // HAVE_CG
-
-/**
- * Analyzes a parameter and decides how to bind the parameter to some part of
- * panda's internal state.  Updates one of the bind arrays to cause the
- * binding to occur.
- *
- * If there is an error, this routine will append an error message onto the
- * error messages.
- */
-bool Shader::
-compile_parameter(ShaderArgInfo &p, int *arg_dim) {
-  if (p._id._name.size() == 0) return true;
-  if (p._id._name[0] == '$') return true;
-
-  // It could be inside a struct, strip off everything before the last dot.
-  size_t loc = p._id._name.find_last_of('.');
-
-  string basename (p._id._name);
-  string struct_name  ("");
-
-  if (loc < string::npos) {
-    basename = p._id._name.substr(loc + 1);
-    struct_name =  p._id._name.substr(0,loc+1);
-  }
-
-  // Split it at the underscores.
-  vector_string pieces;
-  tokenize(basename, pieces, "_");
-
-  if (basename.size() >= 2 && basename.substr(0, 2) == "__") {
-    return true;
-  }
-
-  // Implement vtx parameters - the varying kind.
-  if (pieces[0] == "vtx") {
-    if ((!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_varying(p)) ||
-        (!cp_errchk_parameter_float(p, 1, 4))) {
-      return false;
-    }
-    ShaderVarSpec bind;
-    bind._id = p._id;
-    bind._append_uv = -1;
-    bind._numeric_type = p._numeric_type;
-
-    if (pieces.size() == 2) {
-      if (pieces[1] == "position") {
-        bind._name = InternalName::get_vertex();
-        bind._append_uv = -1;
-        _var_spec.push_back(bind);
-        return true;
-      }
-      if (pieces[1].substr(0, 8) == "texcoord") {
-        bind._name = InternalName::get_texcoord();
-        if (pieces[1].size() > 8) {
-          bind._append_uv = atoi(pieces[1].c_str() + 8);
-        }
-        _var_spec.push_back(bind);
-        return true;
-      }
-      if (pieces[1].substr(0, 7) == "tangent") {
-        bind._name = InternalName::get_tangent();
-        if (pieces[1].size() > 7) {
-          bind._append_uv = atoi(pieces[1].c_str() + 7);
-        }
-        _var_spec.push_back(bind);
-        return true;
-      }
-      if (pieces[1].substr(0, 8) == "binormal") {
-        bind._name = InternalName::get_binormal();
-        if (pieces[1].size() > 8) {
-          bind._append_uv = atoi(pieces[1].c_str() + 8);
-        }
-        _var_spec.push_back(bind);
-        return true;
-      }
-    } else if (pieces.size() == 3) {
-      if (pieces[1] == "transform") {
-        if (pieces[2] == "blend") {
-          bind._name = InternalName::get_transform_blend();
-          _var_spec.push_back(bind);
-          return true;
-        }
-        if (pieces[2] == "index") {
-          bind._name = InternalName::get_transform_index();
-          _var_spec.push_back(bind);
-          return true;
-        }
-        if (pieces[2] == "weight") {
-          bind._name = InternalName::get_transform_weight();
-          _var_spec.push_back(bind);
-          return true;
-        }
-      }
-    }
-
-    bind._name = InternalName::get_root();
-    for (size_t i = 1; i < pieces.size(); ++i) {
-      bind._name = bind._name->append(pieces[i]);
-    }
-    _var_spec.push_back(bind);
-    return true;
-  }
-
-  if (pieces[0] == "mat" && pieces[1] == "shadow") {
-    if ((!cp_errchk_parameter_words(p,3))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,16,16))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_mat4_whole;
-    bind._func = SMF_compose;
-    bind._part[0] = SMO_view_to_apiview;
-    bind._arg[0] = nullptr;
-    bind._part[1] = SMO_apiview_to_apiclip_light_source_i;
-    bind._arg[1] = nullptr;
-    bind._index = atoi(pieces[2].c_str());
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  // Implement some macros.  Macros work by altering the contents of the
-  // 'pieces' array, and then falling through.
-
-  if (pieces[0] == "mstrans") {
-    pieces[0] = "trans";
-    pieces.push_back("to");
-    pieces.push_back("model");
-  }
-  if (pieces[0] == "wstrans") {
-    pieces[0] = "trans";
-    pieces.push_back("to");
-    pieces.push_back("world");
-  }
-  if (pieces[0] == "vstrans") {
-    pieces[0] = "trans";
-    pieces.push_back("to");
-    pieces.push_back("view");
-  }
-  if (pieces[0] == "cstrans") {
-    pieces[0] = "trans";
-    pieces.push_back("to");
-    pieces.push_back("clip");
-  }
-  if (pieces[0] == "mspos") {
-    pieces[0] = "row3";
-    pieces.push_back("to");
-    pieces.push_back("model");
-  }
-  if (pieces[0] == "wspos") {
-    pieces[0] = "row3";
-    pieces.push_back("to");
-    pieces.push_back("world");
-  }
-  if (pieces[0] == "vspos") {
-    pieces[0] = "row3";
-    pieces.push_back("to");
-    pieces.push_back("view");
-  }
-  if (pieces[0] == "cspos") {
-    pieces[0] = "row3";
-    pieces.push_back("to");
-    pieces.push_back("clip");
-  }
-
-  // Implement the modelview macros.
-
-  if ((pieces[0] == "mat")||(pieces[0] == "inv")||
-      (pieces[0] == "tps")||(pieces[0] == "itp")) {
-    if (!cp_errchk_parameter_words(p, 2)) {
-      return false;
-    }
-    string trans = pieces[0];
-    string matrix = pieces[1];
-    pieces.clear();
-    if (matrix == "modelview") {
-      tokenize("trans_model_to_apiview", pieces, "_");
-    } else if (matrix == "projection") {
-      tokenize("trans_apiview_to_apiclip", pieces, "_");
-    } else if (matrix == "modelproj") {
-      tokenize("trans_model_to_apiclip", pieces, "_");
-    } else {
-      cp_report_error(p,"unrecognized matrix name");
-      return false;
-    }
-    if (trans=="mat") {
-      pieces[0] = "trans";
-    } else if (trans=="inv") {
-      string t = pieces[1];
-      pieces[1] = pieces[3];
-      pieces[3] = t;
-    } else if (trans=="tps") {
-      pieces[0] = "tpose";
-    } else if (trans=="itp") {
-      string t = pieces[1];
-      pieces[1] = pieces[3];
-      pieces[3] = t;
-      pieces[0] = "tpose";
-    }
-  }
-
-  // Implement the transform-matrix generator.
-
-  if ((pieces[0]=="trans")||
-      (pieces[0]=="tpose")||
-      (pieces[0]=="row0")||
-      (pieces[0]=="row1")||
-      (pieces[0]=="row2")||
-      (pieces[0]=="row3")||
-      (pieces[0]=="col0")||
-      (pieces[0]=="col1")||
-      (pieces[0]=="col2")||
-      (pieces[0]=="col3")) {
-
-    if ((!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p)))
-      return false;
-
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_mat4_whole;
-    bind._func = SMF_compose;
-    bind._part[0] = SMO_view_to_apiview;
-    bind._arg[0] = nullptr;
-    bind._part[1] = SMO_apiview_to_apiclip_light_source_i;
-    bind._arg[1] = nullptr;
-    bind._index = atoi(pieces[2].c_str());
-
-    int next = 1;
-    pieces.push_back("");
-
-    // Decide whether this is a matrix or vector.
-    if (pieces[0][0] == 't') { // trans or tpose
-      bool tpose = (pieces[0][1] == 'p');
-      if (p._type == SAT_mat3x3) {
-        if (!cp_errchk_parameter_float(p, 9, 9)) {
-          return false;
-        }
-        bind._piece = tpose ? SMP_mat4_transpose3x3 : SMP_mat4_upper3x3;
-      }
-      else {
-        if (!cp_errchk_parameter_float(p, 16, 16)) {
-          return false;
-        }
-        bind._piece = tpose ? SMP_mat4_transpose : SMP_mat4_whole;
-      }
-    }
-    else if (pieces[0][0] == 'r') { // row0, row1, row2, row3
-      if (!cp_errchk_parameter_float(p, 4, 4)) {
-        return false;
-      }
-      bind._piece = SMP_vec4;
-      bind._offset = (pieces[0][3] - '0') * 4;
-    }
-    else if (pieces[0][0] == 'c') { // col0, col1, col2, col3
-      if (!cp_errchk_parameter_float(p, 4, 4)) {
-        return false;
-      }
-      bind._piece = SMP_mat4_column;
-      bind._offset = pieces[0][3] - '0';
-    }
-
-    if (!cp_parse_coord_sys(p, pieces, next, bind, true)) {
-      return false;
-    }
-    if (!cp_parse_delimiter(p, pieces, next)) {
-      return false;
-    }
-    if (!cp_parse_coord_sys(p, pieces, next, bind, false)) {
-      return false;
-    }
-    if (!cp_parse_eol(p, pieces, next)) {
-      return false;
-    }
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  // Special parameter: attr_material or attr_color
-
-  if (pieces[0] == "attr") {
-    if ((!cp_errchk_parameter_words(p,2)) ||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    if (pieces[1] == "material") {
-      if (!cp_errchk_parameter_float(p,16,16)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_mat4_transpose;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_attr_material;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-    } else if (pieces[1] == "color") {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_attr_color;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-    } else if (pieces[1] == "colorscale") {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_attr_colorscale;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-    } else if (pieces[1] == "fog") {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_attr_fog;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-      bind._offset = FA_params;
-    } else if (pieces[1] == "fogcolor") {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_attr_fog;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-      bind._offset = FA_color;
-    } else if (pieces[1] == "ambient") {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_light_ambient;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-    } else if (pieces[1].compare(0, 5, "light") == 0) {
-      if (!cp_errchk_parameter_float(p,16,16)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_mat4_transpose;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_light_source_i_packed;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-      bind._index = atoi(pieces[1].c_str() + 5);
-    } else if (pieces[1].compare(0, 5, "lspec") == 0) {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_light_source_i;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-      bind._index = atoi(pieces[1].c_str() + 5);
-      bind._offset = LA_specular;
-    } else if (pieces[1] == "pointparams") {
-      if (!cp_errchk_parameter_float(p,3,4)) {
-        return false;
-      }
-      bind._id = p._id;
-      bind._piece = SMP_vec4;
-      bind._func = SMF_first;
-      bind._part[0] = SMO_attr_pointparams;
-      bind._arg[0] = nullptr;
-      bind._part[1] = SMO_identity;
-      bind._arg[1] = nullptr;
-    } else {
-      cp_report_error(p,"Unknown attr parameter.");
-      return false;
-    }
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "color") {
-    if ((!cp_errchk_parameter_words(p,1)) ||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  // Keywords to access light properties.
-
-  if (pieces[0] == "alight") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,3,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_alight_x;
-    bind._arg[0] = InternalName::make(pieces[1]);
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "satten") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,4,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_satten_x;
-    bind._arg[0] = InternalName::make(pieces[1]);
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if ((pieces[0]=="dlight")||(pieces[0]=="plight")||(pieces[0]=="slight")) {
-    if ((!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,16,16))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_mat4_transpose;
-    int next = 1;
-    pieces.push_back("");
-    if (pieces[next] == "") {
-      cp_report_error(p, "Light name expected");
-      return false;
-    }
-    if (pieces[0] == "dlight") {
-      bind._func = SMF_transform_dlight;
-      bind._part[0] = SMO_dlight_x;
-    } else if (pieces[0] == "plight") {
-      bind._func = SMF_transform_plight;
-      bind._part[0] = SMO_plight_x;
-    } else if (pieces[0] == "slight") {
-      bind._func = SMF_transform_slight;
-      bind._part[0] = SMO_slight_x;
-    }
-    bind._arg[0] = InternalName::make(pieces[next]);
-    next += 1;
-    if (!cp_parse_delimiter(p, pieces, next)) {
-      return false;
-    }
-    if (!cp_parse_coord_sys(p, pieces, next, bind, false)) {
-      return false;
-    }
-    if (!cp_parse_eol(p, pieces, next)) {
-      return false;
-    }
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "texmat") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,16,16))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_mat4_whole;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_texmat_i;
-    bind._arg[0] = nullptr;
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    bind._index = atoi(pieces[1].c_str());
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "texscale") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,3,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_texscale_i;
-    bind._arg[0] = nullptr;
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    bind._index = atoi(pieces[1].c_str());
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "texcolor") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,3,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_texcolor_i;
-    bind._arg[0] = nullptr;
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    bind._index = atoi(pieces[1].c_str());
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "texconst") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,3,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_texconst_i;
-    bind._arg[0] = nullptr;
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    bind._index = atoi(pieces[1].c_str());
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "plane") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,4,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_plane_x;
-    bind._arg[0] = InternalName::make(pieces[1]);
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "clipplane") {
-    if ((!cp_errchk_parameter_words(p,2))||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,4,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_clipplane_x;
-    bind._arg[0] = InternalName::make(pieces[1]);
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  // Keywords to access unusual parameters.
-
-  if (pieces[0] == "sys") {
-    if ((!cp_errchk_parameter_words(p, 2)) ||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    if (pieces[1] == "pixelsize") {
-      if (!cp_errchk_parameter_float(p, 2, 2)) {
-        return false;
-      }
-      bind._part[0] = SMO_pixel_size;
-      bind._arg[0] = nullptr;
-
-    } else if (pieces[1] == "windowsize") {
-      if (!cp_errchk_parameter_float(p, 2, 2)) {
-        return false;
-      }
-      bind._part[0] = SMO_window_size;
-      bind._arg[0] = nullptr;
-
-    } else if (pieces[1] == "time") {
-      if (!cp_errchk_parameter_float(p, 1, 1)) {
-        return false;
-      }
-      bind._piece = SMP_scalar;
-      bind._part[0] = SMO_frame_time;
-      bind._arg[0] = nullptr;
-
-    } else {
-      cp_report_error(p, "unknown system parameter");
-      return false;
-    }
-
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  // Keywords to access textures.
-
-  if (pieces[0] == "tex") {
-    if ((!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p)) ||
-        (!cp_errchk_parameter_sampler(p)))
-      return false;
-    if ((pieces.size() != 2)&&(pieces.size() != 3)) {
-      cp_report_error(p, "Invalid parameter name");
-      return false;
-    }
-    ShaderTexSpec bind;
-    bind._id = p._id;
-    bind._name = nullptr;
-    bind._stage = atoi(pieces[1].c_str());
-    bind._part = STO_stage_i;
-    switch (p._type) {
-    case SAT_sampler1d:      bind._desired_type = Texture::TT_1d_texture; break;
-    case SAT_sampler2d:      bind._desired_type = Texture::TT_2d_texture; break;
-    case SAT_sampler3d:      bind._desired_type = Texture::TT_3d_texture; break;
-    case SAT_sampler2d_array:bind._desired_type = Texture::TT_2d_texture_array; break;
-    case SAT_sampler_cube:   bind._desired_type = Texture::TT_cube_map; break;
-    case SAT_sampler_buffer: bind._desired_type = Texture::TT_buffer_texture; break;
-    case SAT_sampler_cube_array:bind._desired_type = Texture::TT_cube_map_array; break;
-    case SAT_sampler1d_array:bind._desired_type = Texture::TT_1d_texture_array; break;
-    default:
-      cp_report_error(p, "Invalid type for a tex-parameter");
-      return false;
-    }
-    if (pieces.size() == 3) {
-      bind._suffix = InternalName::make(((string)"-") + pieces[2]);
-      shader_cat.warning()
-        << "Parameter " << p._id._name << ": use of a texture suffix is deprecated.\n";
-    }
-    _tex_spec.push_back(bind);
-    return true;
-  }
-
-  if (pieces[0] == "shadow") {
-    if ((!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p)) ||
-        (!cp_errchk_parameter_sampler(p)))
-      return false;
-    if (pieces.size() != 2) {
-      cp_report_error(p, "Invalid parameter name");
-      return false;
-    }
-    ShaderTexSpec bind;
-    bind._id = p._id;
-    bind._name = nullptr;
-    bind._stage = atoi(pieces[1].c_str());
-    bind._part = STO_light_i_shadow_map;
-    switch (p._type) {
-    case SAT_sampler2d:      bind._desired_type = Texture::TT_2d_texture; break;
-    case SAT_sampler_cube:   bind._desired_type = Texture::TT_cube_map; break;
-    default:
-      cp_report_error(p, "Invalid type for a shadow-parameter");
-      return false;
-    }
-    _tex_spec.push_back(bind);
-    return true;
-  }
-
-  // Keywords to fetch texture parameter data.
-
-  if (pieces[0] == "texpad") {
-    if ((!cp_errchk_parameter_words(p,2)) ||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,3,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_texpad_x;
-    bind._arg[0] = InternalName::make(pieces[1]);
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "texpix") {
-    if ((!cp_errchk_parameter_words(p,2)) ||
-        (!cp_errchk_parameter_in(p)) ||
-        (!cp_errchk_parameter_uniform(p))||
-        (!cp_errchk_parameter_float(p,2,4))) {
-      return false;
-    }
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._piece = SMP_vec4;
-    bind._func = SMF_first;
-    bind._part[0] = SMO_texpix_x;
-    bind._arg[0] = InternalName::make(pieces[1]);
-    bind._part[1] = SMO_identity;
-    bind._arg[1] = nullptr;
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  if (pieces[0] == "tbl") {
-    // Handled elsewhere.
-    return true;
-  }
-
-  if (pieces[0] == "l") {
-    // IMPLEMENT THE ERROR CHECKING
-    return true; // Cg handles this automatically.
-  }
-
-  if (pieces[0] == "o") {
-    // IMPLEMENT THE ERROR CHECKING
-    return true; // Cg handles this automatically.
-  }
-
-  // Fetch uniform parameters without prefix
-
-  if ((!cp_errchk_parameter_in(p)) ||
-      (!cp_errchk_parameter_uniform(p))) {
-    return false;
-  }
-  //bool k_prefix  = false;
-
-  // solve backward compatibility issue
-  if (pieces[0] == "k") {
-    //k_prefix = true;
-    basename = basename.substr(2);
-  }
-
-  PT(InternalName) kinputname = InternalName::make(struct_name + basename);
-
-  switch (p._class) {
-  case SAC_vector:
-  case SAC_matrix:
-  case SAC_scalar:
-  case SAC_array: {
-    if (!cp_errchk_parameter_ptr(p)) {
-      return false;
-    }
-
-    ShaderMatSpec bind;
-    bind._id = p._id;
-    bind._func = SMF_shader_input_ptr;
-    bind._part[0] = SMO_INVALID;
-    bind._part[1] = SMO_INVALID;
-    bind._arg[0] = kinputname;
-    bind._arg[1] = nullptr;
-    bind._array_count = arg_dim[0] * arg_dim[1];
-    bind._num_components = arg_dim[2];
-    bind._numeric_type = p._numeric_type;
-    bind._piece = (ShaderMatPiece)(SMP_scalar + (arg_dim[2] - 1));
-
-    // if dim[0] = -1,  glShaderContext will not check the param size
-    //if (k_prefix) bind._dim[0] = -1;
-    cp_add_mat_spec(bind);
-    return true;
-  }
-
-  case SAC_sampler: {
-    switch (p._type) {
-    case SAT_sampler1d: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_1d_texture;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler2d: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_2d_texture;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler3d: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_3d_texture;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler2d_array: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_2d_texture_array;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler_cube: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_cube_map;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler_buffer: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_buffer_texture;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler_cube_array: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_cube_map_array;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    case SAT_sampler1d_array: {
-      ShaderTexSpec bind;
-      bind._id = p._id;
-      bind._name = kinputname;
-      bind._part = STO_named_input;
-      bind._desired_type = Texture::TT_1d_texture_array;
-      _tex_spec.push_back(bind);
-      return true;
-    }
-    default:
-      cp_report_error(p, "invalid type for non-prefix parameter");
-      return false;
-    }
-  }
-  default:
-    cp_report_error(p, "invalid class for non-prefix parameter");
-    return false;
-  }
-
-  cp_report_error(p, "unrecognized parameter name");
-  return false;
-}
-
-/**
- *
- */
-void Shader::
-clear_parameters() {
-  _mat_spec.clear();
-  _var_spec.clear();
-  _tex_spec.clear();
-}
-
-/**
- * Called by the back-end when the shader has compiled data available.
- */
-void Shader::
-set_compiled(unsigned int format, const char *data, size_t length) {
-  _compiled_format = format;
-  _compiled_binary.assign(data, length);
-
-  // Store the compiled shader in the cache.
-  if (_cache_compiled_shader && !_record.is_null()) {
-    _record->set_data(this);
-
-    BamCache *cache = BamCache::get_global_ptr();
-    cache->store(_record);
-  }
-}
-
-/**
- * Called by the back-end to retrieve compiled data.
- */
-bool Shader::
-get_compiled(unsigned int &format, string &binary) const {
-  format = _compiled_format;
-  binary = _compiled_binary;
-  return !binary.empty();
-}
-
-/**
- * Called by the graphics back-end to specify the caps with which we will
- * likely want to be compiling our shaders.
- */
-void Shader::
-set_default_caps(const ShaderCaps &caps) {
-  _default_caps = caps;
-}
-
-#ifdef HAVE_CG
-/**
- *
- */
-Shader::ShaderArgType Shader::
-cg_parameter_type(CGparameter p) {
-  switch (cgGetParameterClass(p)) {
-  case CG_PARAMETERCLASS_SCALAR: return SAT_scalar;
-  case CG_PARAMETERCLASS_VECTOR:
-    switch (cgGetParameterColumns(p)) {
-    case 1:  return SAT_vec1;
-    case 2:  return SAT_vec2;
-    case 3:  return SAT_vec3;
-    case 4:  return SAT_vec4;
-    default: return SAT_unknown;
-    }
-  case CG_PARAMETERCLASS_MATRIX:
-    switch (cgGetParameterRows(p)) {
-    case 1:
-      switch (cgGetParameterColumns(p)) {
-      case 1:  return SAT_mat1x1;
-      case 2:  return SAT_mat1x2;
-      case 3:  return SAT_mat1x3;
-      case 4:  return SAT_mat1x4;
-      default: return SAT_unknown;
-      }
-    case 2:
-      switch (cgGetParameterColumns(p)) {
-      case 1:  return SAT_mat2x1;
-      case 2:  return SAT_mat2x2;
-      case 3:  return SAT_mat2x3;
-      case 4:  return SAT_mat2x4;
-      default: return SAT_unknown;
-      }
-    case 3:
-      switch (cgGetParameterColumns(p)) {
-      case 1:  return SAT_mat3x1;
-      case 2:  return SAT_mat3x2;
-      case 3:  return SAT_mat3x3;
-      case 4:  return SAT_mat3x4;
-      default: return SAT_unknown;
-      }
-    case 4:
-      switch (cgGetParameterColumns(p)) {
-      case 1:  return SAT_mat4x1;
-      case 2:  return SAT_mat4x2;
-      case 3:  return SAT_mat4x3;
-      case 4:  return SAT_mat4x4;
-      default: return SAT_unknown;
-      }
-    default: return SAT_unknown;
-    }
-  case CG_PARAMETERCLASS_SAMPLER:
-    switch (cgGetParameterType(p)) {
-    case CG_SAMPLER1D:      return Shader::SAT_sampler1d;
-    case CG_SAMPLER2D:      return Shader::SAT_sampler2d;
-    case CG_SAMPLER3D:      return Shader::SAT_sampler3d;
-    case CG_SAMPLER2DARRAY: return Shader::SAT_sampler2d_array;
-    case CG_SAMPLERCUBE:    return Shader::SAT_sampler_cube;
-    case CG_SAMPLERBUF:     return Shader::SAT_sampler_buffer;
-    case CG_SAMPLERCUBEARRAY:return Shader::SAT_sampler_cube_array;
-    case CG_SAMPLER1DARRAY: return Shader::SAT_sampler1d_array;
-    // CG_SAMPLER1DSHADOW and CG_SAMPLER2DSHADOW
-    case 1313:              return Shader::SAT_sampler1d;
-    case 1314:              return Shader::SAT_sampler2d;
-    default: return SAT_unknown;
-    }
-  case CG_PARAMETERCLASS_ARRAY: return SAT_unknown;
-  default:
-    return SAT_unknown;
-  }
-}
-
-/**
- *
- */
-Shader::ShaderArgClass Shader::cg_parameter_class(CGparameter p) {
-  switch (cgGetParameterClass(p)) {
-  case CG_PARAMETERCLASS_SCALAR:  return Shader::SAC_scalar;
-  case CG_PARAMETERCLASS_VECTOR:  return Shader::SAC_vector;
-  case CG_PARAMETERCLASS_MATRIX:  return Shader::SAC_matrix;
-  case CG_PARAMETERCLASS_SAMPLER: return Shader::SAC_sampler;
-  case CG_PARAMETERCLASS_ARRAY:   return Shader::SAC_array;
-  default:                        return Shader::SAC_unknown;
-  }
-}
-
-/**
- *
- */
-Shader::ShaderArgDir Shader::
-cg_parameter_dir(CGparameter p) {
-  switch (cgGetParameterDirection(p)) {
-  case CG_IN:    return Shader::SAD_in;
-  case CG_OUT:   return Shader::SAD_out;
-  case CG_INOUT: return Shader::SAD_inout;
-  default:       return Shader::SAD_unknown;
-  }
-}
-
-/**
- * xyz
- */
-void Shader::
-cg_release_resources() {
-  if (_cg_vprogram != 0) {
-    cgDestroyProgram(_cg_vprogram);
-    _cg_vprogram = 0;
-  }
-  if (_cg_fprogram != 0) {
-    cgDestroyProgram(_cg_fprogram);
-    _cg_fprogram = 0;
-  }
-  if (_cg_gprogram != 0) {
-    cgDestroyProgram(_cg_gprogram);
-    _cg_gprogram = 0;
-  }
-}
-
-/**
- * xyz
- */
-CGprogram Shader::
-cg_compile_entry_point(const char *entry, const ShaderCaps &caps,
-                       CGcontext context, ShaderType type) {
-  CGprogram prog;
-  CGerror err;
-  const char *compiler_args[100];
-  const string text = get_text(type);
-  int nargs = 0;
-
-  int active, ultimate;
-
-  switch (type) {
-  case ST_vertex:
-    active   = caps._active_vprofile;
-    ultimate = caps._ultimate_vprofile;
-    break;
-
-  case ST_fragment:
-    active   = caps._active_fprofile;
-    ultimate = caps._ultimate_fprofile;
-    break;
-
-  case ST_geometry:
-    active   = caps._active_gprofile;
-    ultimate = caps._ultimate_gprofile;
-    break;
-
-  case ST_tess_evaluation:
-  case ST_tess_control:
-    active   = caps._active_tprofile;
-    ultimate = caps._ultimate_tprofile;
-    break;
-
-  case ST_none:
-  default:
-    active   = CG_PROFILE_UNKNOWN;
-    ultimate = CG_PROFILE_UNKNOWN;
-  };
-
-  if (type == ST_fragment && caps._bug_list.count(SBUG_ati_draw_buffers)) {
-    compiler_args[nargs++] = "-po";
-    compiler_args[nargs++] = "ATI_draw_buffers";
-  }
-
-  string version_arg;
-  if (!cg_glsl_version.empty() && active != CG_PROFILE_UNKNOWN &&
-      cgGetProfileProperty((CGprofile) active, CG_IS_GLSL_PROFILE)) {
-
-    version_arg = "version=";
-    version_arg += cg_glsl_version;
-
-    compiler_args[nargs++] = "-po";
-    compiler_args[nargs++] = version_arg.c_str();
-  }
-
-  compiler_args[nargs] = 0;
-
-  cgGetError();
-
-  if ((active != (int)CG_PROFILE_UNKNOWN) && (active != ultimate)) {
-    // Print out some debug information about what we're doing.
-    if (shader_cat.is_debug()) {
-      shader_cat.debug()
-        << "Compiling Cg shader " << get_filename(type) << " with entry point " << entry
-        << " and active profile " << cgGetProfileString((CGprofile) active) << "\n";
-
-      if (nargs > 0) {
-        shader_cat.debug() << "Using compiler arguments:";
-        for (int i = 0; i < nargs; ++i) {
-          shader_cat.debug(false) << " " << compiler_args[i];
-        }
-        shader_cat.debug(false) << "\n";
-      }
-    }
-
-    // Compile the shader with the active profile.
-    prog = cgCreateProgram(context, CG_SOURCE, text.c_str(),
-                           (CGprofile)active, entry, (const char **)compiler_args);
-    err = cgGetError();
-    if (err == CG_NO_ERROR) {
-      return prog;
-    }
-    if (prog != 0) {
-      cgDestroyProgram(prog);
-    }
-    if (shader_cat.is_debug()) {
-      shader_cat.debug()
-        << "Compilation with active profile failed: " << cgGetErrorString(err) << "\n";
-      if (err == CG_COMPILER_ERROR) {
-        const char *listing = cgGetLastListing(context);
-        if (listing != nullptr) {
-          shader_cat.debug(false) << listing;
-        }
-      }
-    }
-  }
-
-  if (shader_cat.is_debug()) {
-    shader_cat.debug()
-      << "Compiling Cg shader " << get_filename(type) << " with entry point " << entry
-      << " and ultimate profile " << cgGetProfileString((CGprofile) ultimate) << "\n";
-  }
-
-  // The active profile failed, so recompile it with the ultimate profile.
-  prog = cgCreateProgram(context, CG_SOURCE, text.c_str(),
-                         (CGprofile)ultimate, entry, nullptr);
-
-  // Extract the output listing.
-  err = cgGetError();
-  const char *listing = cgGetLastListing(context);
-
-  if (err == CG_NO_ERROR && listing != nullptr && strlen(listing) > 1) {
-    shader_cat.warning()
-      << "Encountered warnings during compilation of " << get_filename(type)
-      << ":\n" << listing;
-
-  } else if (err == CG_COMPILER_ERROR) {
-    shader_cat.error()
-      << "Failed to compile Cg shader " << get_filename(type);
-    if (listing != nullptr) {
-      shader_cat.error(false) << ":\n" << listing;
-    } else {
-      shader_cat.error(false) << "!\n";
-    }
-  }
-
-  if (err == CG_NO_ERROR) {
-    return prog;
-  }
-
-  if (shader_cat.is_debug()) {
-    shader_cat.debug()
-      << "Compilation with ultimate profile failed: " << cgGetErrorString(err) << "\n";
-  }
-
-  if (prog != 0) {
-    cgDestroyProgram(prog);
-  }
-  return 0;
-}
-
-/**
- * Compiles a Cg shader for a given set of capabilities.  If successful, the
- * shader is stored in the instance variables _cg_context, _cg_vprogram,
- * _cg_fprogram.
- */
-bool Shader::
-cg_compile_shader(const ShaderCaps &caps, CGcontext context) {
-  _cg_last_caps = caps;
-
-  if (!_text._separate || !_text._vertex.empty()) {
-    _cg_vprogram = cg_compile_entry_point("vshader", caps, context, ST_vertex);
-    if (_cg_vprogram == 0) {
-      cg_release_resources();
-      return false;
-    }
-    _cg_vprofile = cgGetProgramProfile(_cg_vprogram);
-  }
-
-  if (!_text._separate || !_text._fragment.empty()) {
-    _cg_fprogram = cg_compile_entry_point("fshader", caps, context, ST_fragment);
-    if (_cg_fprogram == 0) {
-      cg_release_resources();
-      return false;
-    }
-    _cg_fprofile = cgGetProgramProfile(_cg_fprogram);
-  }
-
-  if ((_text._separate && !_text._geometry.empty()) || (!_text._separate && _text._shared.find("gshader") != string::npos)) {
-    _cg_gprogram = cg_compile_entry_point("gshader", caps, context, ST_geometry);
-    if (_cg_gprogram == 0) {
-      cg_release_resources();
-      return false;
-    }
-    _cg_gprofile = cgGetProgramProfile(_cg_gprogram);
-  }
-
-  if (_cg_vprogram == 0 && _cg_fprogram == 0 && _cg_gprogram == 0) {
-    shader_cat.error() << "Shader must at least have one program!\n";
-    cg_release_resources();
-    return false;
-  }
-
-  // This is present to work around a bug in the Cg compiler for Direct3D 9.
-  // It generates "texld_sat" instructions that the result in an
-  // D3DXERR_INVALIDDATA error when trying to load the shader, since the _sat
-  // modifier may not be used on tex* instructions.
-  if (_cg_fprofile == CG_PROFILE_PS_2_0 ||
-      _cg_fprofile == CG_PROFILE_PS_2_X ||
-      _cg_fprofile == CG_PROFILE_PS_3_0) {
-    vector_string lines;
-    tokenize(cgGetProgramString(_cg_fprogram, CG_COMPILED_PROGRAM), lines, "\n");
-
-    ostringstream out;
-    int num_modified = 0;
-
-    for (size_t i = 0; i < lines.size(); ++i) {
-      const string &line = lines[i];
-
-      size_t space = line.find(' ');
-      if (space == string::npos) {
-        out << line << '\n';
-        continue;
-      }
-
-      string instr = line.substr(0, space);
-
-      // Look for a texld instruction with _sat modifier.
-      if (instr.compare(0, 5, "texld") == 0 &&
-          instr.compare(instr.size() - 4, 4, "_sat") == 0) {
-        // Which destination register are we operating on?
-        string reg = line.substr(space + 1, line.find(',', space) - space - 1);
-
-        // Move the saturation operation to a separate instruction.
-        instr.resize(instr.size() - 4);
-        out << instr << ' ' << line.substr(space + 1) << '\n';
-        out << "mov_sat " << reg << ", " << reg << '\n';
-        ++num_modified;
-      } else {
-        out << line << '\n';
-      }
-    }
-
-    if (num_modified > 0) {
-      string result = out.str();
-      CGprogram new_program;
-      new_program = cgCreateProgram(context, CG_OBJECT, result.c_str(),
-                                    (CGprofile)_cg_fprofile, "fshader",
-                                    nullptr);
-      if (new_program) {
-        cgDestroyProgram(_cg_fprogram);
-        _cg_fprogram = new_program;
-
-        if (shader_cat.is_debug()) {
-          shader_cat.debug()
-            << "Replaced " << num_modified << " invalid texld_sat instruction"
-            << ((num_modified == 1) ? "" : "s") << " in compiled shader\n";
-        }
-      } else {
-        shader_cat.warning()
-          << "Failed to load shader with fixed texld_sat instructions: "
-          << cgGetErrorString(cgGetError()) << "\n";
-      }
-    }
-  }
-
-  // DEBUG: output the generated program
-  if (shader_cat.is_debug()) {
-    const char *vertex_program;
-    const char *fragment_program;
-    const char *geometry_program;
-
-    if (_cg_vprogram != 0) {
-      shader_cat.debug()
-        << "Cg vertex profile: " << cgGetProfileString((CGprofile)_cg_vprofile) << "\n";
-      vertex_program = cgGetProgramString(_cg_vprogram, CG_COMPILED_PROGRAM);
-      shader_cat.spam() << vertex_program << "\n";
-    }
-    if (_cg_fprogram != 0) {
-      shader_cat.debug()
-        << "Cg fragment profile: " << cgGetProfileString((CGprofile)_cg_fprofile) << "\n";
-      fragment_program = cgGetProgramString(_cg_fprogram, CG_COMPILED_PROGRAM);
-      shader_cat.spam() << fragment_program << "\n";
-    }
-    if (_cg_gprogram != 0) {
-      shader_cat.debug()
-        << "Cg geometry profile: " << cgGetProfileString((CGprofile)_cg_gprofile) << "\n";
-      geometry_program = cgGetProgramString(_cg_gprogram, CG_COMPILED_PROGRAM);
-      shader_cat.spam() << geometry_program << "\n";
-    }
-  }
-
-  return true;
-}
-
-/**
- *
- */
-bool Shader::
-cg_analyze_entry_point(CGprogram prog, ShaderType type) {
-  bool success = true;
-
-  cg_recurse_parameters(cgGetFirstParameter(prog, CG_PROGRAM), type, success);
-  return success;
-}
-
-/**
- * This subroutine analyzes the parameters of a Cg shader.  The output is
- * stored in instance variables: _mat_spec, _var_spec, and _tex_spec.
- *
- * In order to do this, it is necessary to compile the shader.  It would be a
- * waste of CPU time to compile the shader, analyze the parameters, and then
- * discard the compiled shader.  This would force us to compile it again
- * later, when we need to build the ShaderContext.  Instead, we cache the
- * compiled Cg program in instance variables.  Later, a ShaderContext can pull
- * the compiled shader from these instance vars.
- *
- * To compile a shader, you need to first choose a profile.  There are two
- * contradictory objectives:
- *
- * 1. If you don't use the gsg's active profile, then the cached compiled
- * shader will not be useful to the ShaderContext.
- *
- * 2. If you use too weak a profile, then the shader may not compile.  So to
- * guarantee success, you should use the ultimate profile.
- *
- * To resolve this conflict, we try the active profile first, and if that
- * doesn't work, we try the ultimate profile.
- *
- */
-bool Shader::
-cg_analyze_shader(const ShaderCaps &caps) {
-
-  // Make sure we have a context for analyzing the shader.
-  if (_cg_context == 0) {
-    _cg_context = cgCreateContext();
-    if (_cg_context == 0) {
-      shader_cat.error()
-        << "Could not create a Cg context object: "
-        << cgGetErrorString(cgGetError()) << "\n";
-      return false;
-    }
-  }
-
-  if (!cg_compile_shader(caps, _cg_context)) {
-    return false;
-  }
-
-  if (_cg_fprogram != 0) {
-     if (!cg_analyze_entry_point(_cg_fprogram, ST_fragment)) {
-      cg_release_resources();
-      clear_parameters();
-      return false;
-    }
-  }
-
-  if (_var_spec.size() != 0) {
-    shader_cat.error() << "Cannot use vtx parameters in an fshader\n";
-    cg_release_resources();
-    clear_parameters();
-    return false;
-  }
-
-  if (_cg_vprogram != 0) {
-    if (!cg_analyze_entry_point(_cg_vprogram, ST_vertex)) {
-      cg_release_resources();
-      clear_parameters();
-      return false;
-    }
-  }
-
-  if (_cg_gprogram != 0) {
-    if (!cg_analyze_entry_point(_cg_gprogram, ST_geometry)) {
-      cg_release_resources();
-      clear_parameters();
-      return false;
-    }
-  }
-
-  // Assign sequence numbers to all parameters.  GLCgShaderContext relies on
-  // the fact that the varyings start at seqno 0.
-  int seqno = 0;
-  for (size_t i = 0; i < _var_spec.size(); ++i) {
-    _var_spec[i]._id._seqno = seqno++;
-  }
-  for (size_t i = 0; i < _mat_spec.size(); ++i) {
-    _mat_spec[i]._id._seqno = seqno++;
-  }
-  for (size_t i = 0; i < _tex_spec.size(); ++i) {
-    _tex_spec[i]._id._seqno = seqno++;
-  }
-
-  /*
-  // The following code is present to work around a bug in the Cg compiler.
-  // It does not generate correct code for shadow map lookups when using arbfp1.
-  // This is a particularly onerous limitation, given that arbfp1 is the only
-  // Cg target that works on radeons.  I suspect this is an intentional
-  // omission on nvidia's part.  The following code fetches the output listing,
-  // detects the error, repairs the code, and resumbits the repaired code to Cg.
-  if ((_cg_fprofile == CG_PROFILE_ARBFP1) && (gsghint->_supports_shadow_filter)) {
-    bool shadowunit[32];
-    bool anyshadow = false;
-    memset(shadowunit, 0, sizeof(shadowunit));
-    vector_string lines;
-    tokenize(cgGetProgramString(_cg_program[SHADER_type_frag],
-                                CG_COMPILED_PROGRAM), lines, "\n");
-    // figure out which texture units contain shadow maps.
-    for (int lineno=0; lineno<(int)lines.size(); lineno++) {
-      if (lines[lineno].compare(0,21,"#var sampler2DSHADOW ")) {
-        continue;
-      }
-      vector_string fields;
-      tokenize(lines[lineno], fields, ":");
-      if (fields.size()!=5) {
-        continue;
-      }
-      vector_string words;
-      tokenize(trim(fields[2]), words, " ");
-      if (words.size()!=2) {
-        continue;
-      }
-      int unit = atoi(words[1].c_str());
-      if ((unit < 0)||(unit >= 32)) {
-        continue;
-      }
-      anyshadow = true;
-      shadowunit[unit] = true;
-    }
-    // modify all TEX statements that use the relevant texture units.
-    if (anyshadow) {
-      for (int lineno=0; lineno<(int)lines.size(); lineno++) {
-        if (lines[lineno].compare(0,4,"TEX ")) {
-          continue;
-        }
-        vector_string fields;
-        tokenize(lines[lineno], fields, ",");
-        if ((fields.size()!=4)||(trim(fields[3]) != "2D;")) {
-          continue;
-        }
-        vector_string texunitf;
-        tokenize(trim(fields[2]), texunitf, "[]");
-        if ((texunitf.size()!=3)||(texunitf[0] != "texture")||(texunitf[2]!="")) {
-          continue;
-        }
-        int unit = atoi(texunitf[1].c_str());
-        if ((unit < 0) || (unit >= 32) || (shadowunit[unit]==false)) {
-          continue;
-        }
-        lines[lineno] = fields[0]+","+fields[1]+","+fields[2]+", SHADOW2D;";
-      }
-      string result = "!!ARBfp1.0\nOPTION ARB_fragment_program_shadow;\n";
-      for (int lineno=1; lineno<(int)lines.size(); lineno++) {
-        result += (lines[lineno] + "\n");
-      }
-      _cg_program[2] = _cg_program[SHADER_type_frag];
-      _cg_program[SHADER_type_frag] =
-        cgCreateProgram(_cg_context, CG_OBJECT, result.c_str(),
-                        _cg_profile[SHADER_type_frag], "fshader", (const char**)NULL);
-      cg_report_errors(s->get_name(), _cg_context);
-      if (_cg_program[SHADER_type_frag]==0) {
-        release_resources();
-        return false;
-      }
-    }
-  }
-  */
-
-  cg_release_resources();
-  return true;
-}
-
-/**
- * Returns the CGprogram of the given shadertype that belongs to this shader.
- */
-CGprogram Shader::
-cg_program_from_shadertype(ShaderType type) {
-  switch (type) {
-  case ST_vertex:
-    return _cg_vprogram;
-
-  case ST_fragment:
-    return _cg_fprogram;
-
-  case ST_geometry:
-    return _cg_gprogram;
-
-  default:
-    return 0;
-  }
-}
-
-/**
- * This routine is used by the ShaderContext constructor to compile the
- * shader.  The CGprogram objects are turned over to the ShaderContext, we no
- * longer own them.
- */
-bool Shader::
-cg_compile_for(const ShaderCaps &caps, CGcontext context,
-               CGprogram &combined_program, pvector<CGparameter> &map) {
-
-  // Initialize the return values to empty.
-  combined_program = 0;
-  map.clear();
-
-  // Make sure the shader is compiled for the target caps.  Most of the time,
-  // it will already be - this is usually a no-op.
-
-  _default_caps = caps;
-  if (!cg_compile_shader(caps, context)) {
-    return false;
-  }
-
-  // If the compile routine used the ultimate profile instead of the active
-  // one, it means the active one isn't powerful enough to compile the shader.
-  if (_cg_vprogram != 0 && _cg_vprofile != caps._active_vprofile) {
-    shader_cat.error() << "Cg vertex program not supported by profile "
-      << cgGetProfileString((CGprofile) caps._active_vprofile) << ": "
-      << get_filename(ST_vertex) << ". Try choosing a different profile.\n";
-    return false;
-  }
-  if (_cg_fprogram != 0 && _cg_fprofile != caps._active_fprofile) {
-    shader_cat.error() << "Cg fragment program not supported by profile "
-      << cgGetProfileString((CGprofile) caps._active_fprofile) << ": "
-      << get_filename(ST_fragment) << ". Try choosing a different profile.\n";
-    return false;
-  }
-  if (_cg_gprogram != 0 && _cg_gprofile != caps._active_gprofile) {
-    shader_cat.error() << "Cg geometry program not supported by profile "
-      << cgGetProfileString((CGprofile) caps._active_gprofile) << ": "
-      << get_filename(ST_geometry) << ". Try choosing a different profile.\n";
-    return false;
-  }
-
-  // Gather the programs we will be combining.
-  pvector<CGprogram> programs;
-  if (_cg_vprogram != 0) {
-    programs.push_back(_cg_vprogram);
-  }
-  if (_cg_fprogram != 0) {
-    programs.push_back(_cg_fprogram);
-  }
-  if (_cg_gprogram != 0) {
-    programs.push_back(_cg_gprogram);
-  }
-
-  // Combine the programs.  This can be more optimal than loading them
-  // individually, and it is even necessary for some profiles (particularly
-  // GLSL profiles on non-NVIDIA GPUs).
-  combined_program = cgCombinePrograms(programs.size(), &programs[0]);
-
-  // Build a parameter map.
-  size_t n_mat = _mat_spec.size();
-  size_t n_tex = _tex_spec.size();
-  size_t n_var = _var_spec.size();
-
-  map.resize(n_mat + n_tex + n_var);
-
-  // This is a bit awkward, we have to go in and seperate out the combined
-  // program, since all the parameter bindings have changed.
-  CGprogram programs_by_type[ST_COUNT];
-  for (int i = 0; i < cgGetNumProgramDomains(combined_program); ++i) {
-    // Conveniently, the CGdomain enum overlaps with ShaderType.
-    CGprogram program = cgGetProgramDomainProgram(combined_program, i);
-    programs_by_type[cgGetProgramDomain(program)] = program;
-  }
-
-  for (size_t i = 0; i < n_mat; ++i) {
-    const ShaderArgId &id = _mat_spec[i]._id;
-    map[id._seqno] = cgGetNamedParameter(programs_by_type[id._type], id._name.c_str());
-
-    if (shader_cat.is_debug()) {
-      const char *resource = cgGetParameterResourceName(map[id._seqno]);
-      if (resource != nullptr) {
-        shader_cat.debug() << "Uniform parameter " << id._name
-                           << " is bound to resource " << resource << "\n";
-      }
-    }
-  }
-
-  for (size_t i = 0; i < n_tex; ++i) {
-    const ShaderArgId &id = _tex_spec[i]._id;
-    CGparameter p = cgGetNamedParameter(programs_by_type[id._type], id._name.c_str());
-
-    if (shader_cat.is_debug()) {
-      const char *resource = cgGetParameterResourceName(p);
-      if (resource != nullptr) {
-        shader_cat.debug() << "Texture parameter " << id._name
-                          << " is bound to resource " << resource << "\n";
-      }
-    }
-    map[id._seqno] = p;
-  }
-
-  for (size_t i = 0; i < n_var; ++i) {
-    const ShaderArgId &id = _var_spec[i]._id;
-    CGparameter p = cgGetNamedParameter(programs_by_type[id._type], id._name.c_str());
-
-    const char *resource = cgGetParameterResourceName(p);
-    if (shader_cat.is_debug() && resource != nullptr) {
-      if (cgGetParameterResource(p) == CG_GLSL_ATTRIB) {
-        shader_cat.debug()
-          << "Varying parameter " << id._name << " is bound to GLSL attribute "
-          << resource << "\n";
-      } else {
-        shader_cat.debug()
-          << "Varying parameter " << id._name << " is bound to resource "
-          << resource << " (" << cgGetParameterResource(p)
-          << ", index " << cgGetParameterResourceIndex(p) << ")\n";
-      }
-    }
-
-    map[id._seqno] = p;
-  }
-
-  // Transfer ownership of the compiled shader.
-  if (_cg_vprogram != 0) {
-    cgDestroyProgram(_cg_vprogram);
-    _cg_vprogram = 0;
-  }
-  if (_cg_fprogram != 0) {
-    cgDestroyProgram(_cg_fprogram);
-    _cg_fprogram = 0;
-  }
-  if (_cg_gprogram != 0) {
-    cgDestroyProgram(_cg_gprogram);
-    _cg_gprogram = 0;
-  }
-
-  _cg_last_caps.clear();
-
-  return true;
-}
-#endif  // HAVE_CG
 
 /**
  * Construct a Shader that will be filled in using fillin() or read() later.
  */
 Shader::
-Shader(ShaderLanguage lang) :
+Shader(SourceLanguage lang) :
   _error_flag(false),
-  _parse(0),
-  _loaded(false),
   _language(lang),
-  _last_modified(0),
   _cache_compiled_shader(false)
 {
-#ifdef HAVE_CG
-  _cg_vprogram = 0;
-  _cg_fprogram = 0;
-  _cg_gprogram = 0;
-  _cg_vprofile = CG_PROFILE_UNKNOWN;
-  _cg_fprofile = CG_PROFILE_UNKNOWN;
-  _cg_gprofile = CG_PROFILE_UNKNOWN;
-  if (_default_caps._ultimate_vprofile == 0 || _default_caps._ultimate_vprofile == CG_PROFILE_UNKNOWN) {
-    if (basic_shaders_only) {
-      _default_caps._active_vprofile = CG_PROFILE_ARBVP1;
-      _default_caps._active_fprofile = CG_PROFILE_ARBFP1;
-      _default_caps._active_gprofile = CG_PROFILE_UNKNOWN;
-    } else {
-      _default_caps._active_vprofile = CG_PROFILE_UNKNOWN;
-      _default_caps._active_fprofile = CG_PROFILE_UNKNOWN;
-      _default_caps._active_gprofile = CG_PROFILE_UNKNOWN;
-    }
-    _default_caps._ultimate_vprofile = cgGetProfile("glslv");
-    _default_caps._ultimate_fprofile = cgGetProfile("glslf");
-    _default_caps._ultimate_gprofile = cgGetProfile("glslg");
-    if (_default_caps._ultimate_gprofile == CG_PROFILE_UNKNOWN) {
-      _default_caps._ultimate_gprofile = cgGetProfile("gp4gp");
-    }
-  }
-#endif
 }
-
-/**
- * Reads the shader from the given filename(s). Returns a boolean indicating
- * success or failure.
- */
-bool Shader::
-read(const ShaderFile &sfile, BamCacheRecord *record) {
-  _text._separate = sfile._separate;
-
-  if (sfile._separate) {
-    if (_language == SL_none) {
-      shader_cat.error()
-        << "No shader language was specified!\n";
-      return false;
-    }
-
-    if (!sfile._vertex.empty() &&
-        !do_read_source(_text._vertex, sfile._vertex, record)) {
-      return false;
-    }
-    if (!sfile._fragment.empty() &&
-        !do_read_source(_text._fragment, sfile._fragment, record)) {
-      return false;
-    }
-    if (!sfile._geometry.empty() &&
-        !do_read_source(_text._geometry, sfile._geometry, record)) {
-      return false;
-    }
-    if (!sfile._tess_control.empty() &&
-        !do_read_source(_text._tess_control, sfile._tess_control, record)) {
-      return false;
-    }
-    if (!sfile._tess_evaluation.empty() &&
-        !do_read_source(_text._tess_evaluation, sfile._tess_evaluation, record)) {
-      return false;
-    }
-    if (!sfile._compute.empty() &&
-        !do_read_source(_text._compute, sfile._compute, record)) {
-      return false;
-    }
-    _filename = sfile;
-
-  } else {
-    if (!do_read_source(_text._shared, sfile._shared, record)) {
-      return false;
-    }
-    _fullpath = _source_files[0];
-    _filename = sfile;
-
-    // Determine which language the shader is written in.
-    if (_language == SL_none) {
-      string header;
-      parse_init();
-      parse_line(header, true, true);
-      if (header == "//Cg") {
-        _language = SL_Cg;
-      } else {
-        shader_cat.error()
-          << "Unable to determine shader language of " << sfile._shared << "\n";
-        return false;
-      }
-    } else if (_language == SL_GLSL) {
-      shader_cat.error()
-        << "GLSL shaders must have separate shader bodies!\n";
-      return false;
-    }
-
-    // Determine which language the shader is written in.
-    if (_language == SL_Cg) {
-#ifdef HAVE_CG
-      ShaderCaps caps = _default_caps;
-      cg_get_profile_from_header(caps);
-
-      if (!cg_analyze_shader(caps)) {
-        shader_cat.error()
-          << "Shader encountered an error.\n";
-        return false;
-      }
-#else
-      shader_cat.error()
-        << "Tried to load Cg shader, but no Cg support is enabled.\n";
-      return false;
-#endif
-    } else {
-      shader_cat.error()
-        << "Shader is not in a supported shader-language.\n";
-      return false;
-    }
-  }
-
-  _prepare_shader_pcollector = PStatCollector(std::string("Draw:Prepare:Shader:") + _debug_name);
-
-  _loaded = true;
-  return true;
-}
-
-/**
- * Loads the shader from the given string(s). Returns a boolean indicating
- * success or failure.
- */
-bool Shader::
-load(const ShaderFile &sbody, BamCacheRecord *record) {
-  _filename = ShaderFile("created-shader");
-  _fullpath = Filename();
-  _text._separate = sbody._separate;
-
-  if (sbody._separate) {
-    if (_language == SL_none) {
-      shader_cat.error()
-        << "No shader language was specified!\n";
-      return false;
-    }
-
-    if (!sbody._vertex.empty() &&
-        !do_load_source(_text._vertex, sbody._vertex, record)) {
-      return false;
-    }
-    if (!sbody._fragment.empty() &&
-        !do_load_source(_text._fragment, sbody._fragment, record)) {
-      return false;
-    }
-    if (!sbody._geometry.empty() &&
-        !do_load_source(_text._geometry, sbody._geometry, record)) {
-      return false;
-    }
-    if (!sbody._tess_control.empty() &&
-        !do_load_source(_text._tess_control, sbody._tess_control, record)) {
-      return false;
-    }
-    if (!sbody._tess_evaluation.empty() &&
-        !do_load_source(_text._tess_evaluation, sbody._tess_evaluation, record)) {
-      return false;
-    }
-    if (!sbody._compute.empty() &&
-        !do_load_source(_text._compute, sbody._compute, record)) {
-      return false;
-    }
-
-  } else {
-    if (!do_load_source(_text._shared, sbody._shared, record)) {
-      return false;
-    }
-
-    // Determine which language the shader is written in.
-    if (_language == SL_none) {
-      string header;
-      parse_init();
-      parse_line(header, true, true);
-      if (header == "//Cg") {
-        _language = SL_Cg;
-      } else {
-        shader_cat.error()
-          << "Unable to determine shader language of " << sbody._shared << "\n";
-        return false;
-      }
-    } else if (_language == SL_GLSL) {
-      shader_cat.error()
-        << "GLSL shaders must have separate shader bodies!\n";
-      return false;
-    }
-
-    // Determine which language the shader is written in.
-    if (_language == SL_Cg) {
-#ifdef HAVE_CG
-      ShaderCaps caps = _default_caps;
-      cg_get_profile_from_header(caps);
-
-      if (!cg_analyze_shader(caps)) {
-        shader_cat.error()
-          << "Shader encountered an error.\n";
-        return false;
-      }
-#else
-      shader_cat.error()
-        << "Tried to load Cg shader, but no Cg support is enabled.\n";
-      return false;
-#endif
-    } else {
-      shader_cat.error()
-        << "Shader is not in a supported shader-language.\n";
-      return false;
-    }
-  }
-
-  _debug_name = "created-shader";
-  _prepare_shader_pcollector = PStatCollector("Draw:Prepare:Shader:created-shader");
-
-  _loaded = true;
-  return true;
-}
-
-/**
- * Reads the shader file from the given path into the given string.
- *
- * Returns false if there was an error with this shader bad enough to consider
- * it 'invalid'.
- */
-bool Shader::
-do_read_source(string &into, const Filename &fn, BamCacheRecord *record) {
-  VirtualFileSystem *vfs = VirtualFileSystem::get_global_ptr();
-  PT(VirtualFile) vf = vfs->find_file(fn, get_model_path());
-  if (vf == nullptr) {
-    shader_cat.error()
-      << "Could not find shader file: " << fn << "\n";
-    return false;
-  }
-
-  Filename fullpath = vf->get_filename();
-
-  if (_language == SL_GLSL && glsl_preprocess) {
-    istream *source = vf->open_read_file(true);
-    if (source == nullptr) {
-      shader_cat.error()
-        << "Could not open shader file: " << fn << "\n";
-      return false;
-    }
-
-    // Preprocess the GLSL file as we read it.
-    shader_cat.info()
-      << "Preprocessing shader file: " << fn << "\n";
-
-    std::set<Filename> open_files;
-    ostringstream sstr;
-    if (!r_preprocess_source(sstr, *source, fn, fullpath, open_files, record)) {
-      vf->close_read_file(source);
-      return false;
-    }
-    vf->close_read_file(source);
-    into = sstr.str();
-
-  } else {
-    shader_cat.info() << "Reading shader file: " << fn << "\n";
-
-    if (!vf->read_file(into, true)) {
-      shader_cat.error()
-        << "Could not read shader file: " << fn << "\n";
-      return false;
-    }
-  }
-
-  if (record != nullptr) {
-    record->add_dependent_file(vf);
-  }
-
-  _last_modified = std::max(_last_modified, vf->get_timestamp());
-  _source_files.push_back(fullpath);
-
-  // Strip trailing whitespace.
-  while (!into.empty() && isspace(into[into.size() - 1])) {
-    into.resize(into.size() - 1);
-  }
-
-  // Except add back a newline at the end, which is needed by Intel drivers.
-  into += "\n";
-
-  if (!_debug_name.empty()) {
-    _debug_name += '/';
-  }
-  _debug_name += fullpath.get_basename();
-
-  return true;
-}
-
-/**
- * Loads the shader file from the given string into the given string,
- * performing any pre-processing on it that may be necessary.
- *
- * Returns false if there was an error with this shader bad enough to consider
- * it 'invalid'.
- */
-bool Shader::
-do_load_source(string &into, const std::string &source, BamCacheRecord *record) {
-  if (_language == SL_GLSL && glsl_preprocess) {
-    // Preprocess the GLSL file as we read it.
-    std::set<Filename> open_files;
-    std::ostringstream sstr;
-    std::istringstream in(source);
-    if (!r_preprocess_source(sstr, in, Filename("created-shader"), Filename(),
-                             open_files, record)) {
-      return false;
-    }
-    into = sstr.str();
-
-  } else {
-    into = source;
-  }
-
-  // Strip trailing whitespace.
-  while (!into.empty() && isspace(into[into.size() - 1])) {
-    into.resize(into.size() - 1);
-  }
-
-  // Except add back a newline at the end, which is needed by Intel drivers.
-  into += "\n";
-
-  return true;
-}
-
-/**
- * Loads a given GLSL file line by line, and processes any #pragma include and
- * once statements, as well as removes any comments.
- *
- * The set keeps track of which files we have already included, for checking
- * recursive includes.
- */
-bool Shader::
-r_preprocess_include(ostream &out, const Filename &fn,
-                     const Filename &source_dir,
-                     std::set<Filename> &once_files,
-                     BamCacheRecord *record, int depth) {
-
-  if (depth > glsl_include_recursion_limit) {
-    shader_cat.error()
-      << "GLSL includes nested too deeply, raise glsl-include-recursion-limit"
-         " if necessary\n";
-    return false;
-  }
-
-  DSearchPath path(get_model_path());
-  if (!source_dir.empty()) {
-    path.prepend_directory(source_dir);
-  }
-
-  VirtualFileSystem *vfs = VirtualFileSystem::get_global_ptr();
-  PT(VirtualFile) vf = vfs->find_file(fn, path);
-  if (vf == nullptr) {
-    shader_cat.error()
-      << "Could not find shader include: " << fn << "\n";
-    return false;
-  }
-
-  Filename full_fn = vf->get_filename();
-  if (once_files.find(full_fn) != once_files.end()) {
-    // If this file had a #pragma once, just move on.
-    return true;
-  }
-
-  istream *source = vf->open_read_file(true);
-  if (source == nullptr) {
-    shader_cat.error()
-      << "Could not open shader include: " << fn << "\n";
-    return false;
-  }
-
-  if (record != nullptr) {
-    record->add_dependent_file(vf);
-  }
-  _last_modified = std::max(_last_modified, vf->get_timestamp());
-  _source_files.push_back(full_fn);
-
-  // We give each file an unique index.  This is so that we can identify a
-  // particular shader in the error output.  We offset them by 2048 so that
-  // they are more recognizable.  GLSL doesn't give us anything more useful
-  // than that, unfortunately.  Don't do this for the top-level file, though.
-  // We don't want anything to get in before a potential #version directive.
-  int fileno = 0;
-  fileno = 2048 + _included_files.size();
-
-  // Write it into the vector so that we can substitute it later when we are
-  // parsing the GLSL error log.  Don't store the full filename because it
-  // would just be too long to display.
-  _included_files.push_back(fn);
-
-  if (shader_cat.is_debug()) {
-    shader_cat.debug()
-      << "Preprocessing shader include " << fileno << ": " << fn << "\n";
-  }
-
-  bool result = r_preprocess_source(out, *source, fn, full_fn, once_files, record, fileno, depth);
-  vf->close_read_file(source);
-  return result;
-}
-
-/**
- * Loads a given GLSL stream line by line, processing any #pragma include and
- * once statements, as well as removing any comments.
- *
- * The set keeps track of which files we have already included, for checking
- * recursive includes.
- */
-bool Shader::
-r_preprocess_source(ostream &out, istream &in, const Filename &fn,
-                    const Filename &full_fn, std::set<Filename> &once_files,
-                    BamCacheRecord *record, int fileno, int depth) {
-
-  // Iterate over the lines for things we may need to preprocess.
-  string line;
-  int ext_google_include = 0; // 1 = warn, 2 = enable
-  int ext_google_line = 0;
-  bool had_include = false;
-  bool had_version = false;
-  int lineno = 0;
-  bool write_line_directive = (fileno != 0);
-
-  while (std::getline(in, line)) {
-    ++lineno;
-
-    if (line.empty()) {
-      // We still write a newline to make sure the line numbering remains
-      // consistent, unless we are about to write a #line directive anyway.
-      if (!write_line_directive) {
-        out.put('\n');
-      }
-      continue;
-    }
-
-    // If the line ends with a backslash, concatenate the following line.
-    // Preprocessor definitions may be broken up into multiple lines.
-    while (line[line.size() - 1] == '\\') {
-      line.resize(line.size() - 1);
-      string line2;
-
-      if (std::getline(in, line2)) {
-        line += line2;
-        if (!write_line_directive) {
-          out.put('\n');
-        }
-        ++lineno;
-      } else {
-        break;
-      }
-    }
-
-    // Look for comments to strip.  This is necessary because comments may
-    // appear in the middle of or around a preprocessor definition.
-    size_t line_comment = line.find("//");
-    size_t block_comment = line.find("/*");
-    if (line_comment < block_comment) {
-      // A line comment - strip off the rest of the line.
-      line.resize(line_comment);
-
-    } else if (block_comment < line_comment) {
-      // A block comment.  Search for closing block.
-      string line2 = line.substr(block_comment + 2);
-
-      // According to the GLSL specification, a block comment is replaced with
-      // a single whitespace character.
-      line.resize(block_comment);
-      line += ' ';
-
-      size_t block_end = line2.find("*/");
-      while (block_end == string::npos) {
-        // Didn't find it - look in the next line.
-        if (std::getline(in, line2)) {
-          if (!write_line_directive) {
-            out.put('\n');
-          }
-          ++lineno;
-          block_end = line2.find("*/");
-        } else {
-          shader_cat.error()
-            << "Expected */ before end of file " << fn << "\n";
-          return false;
-        }
-      }
-
-      line += line2.substr(block_end + 2);
-    }
-
-    // Strip trailing whitespace.
-    while (!line.empty() && isspace(line[line.size() - 1])) {
-      line.resize(line.size() - 1);
-    }
-
-    if (line.empty()) {
-      if (!write_line_directive) {
-        out.put('\n');
-      }
-      continue;
-    }
-
-    // Check if this line contains a #directive.
-    char directive[64];
-    if (line.size() < 8 || sscanf(line.c_str(), " # %63s", directive) != 1) {
-      // Nope.  Just pass the line through unmodified.
-      if (write_line_directive) {
-        out << "#line " << lineno << " " << fileno << " // " << fn << "\n";
-        write_line_directive = false;
-      }
-      out << line << "\n";
-      continue;
-    }
-
-    char pragma[64];
-    size_t nread = 0;
-    // What kind of directive is it?
-    if (strcmp(directive, "pragma") == 0 &&
-        sscanf(line.c_str(), " # pragma %63s", pragma) == 1) {
-      if (strcmp(pragma, "include") == 0) {
-        // Allow both double quotes and angle brackets.
-        Filename incfn, source_dir;
-        {
-          char incfile[2048];
-          if (sscanf(line.c_str(), " # pragma%*[ \t]include \"%2047[^\"]\" %zn", incfile, &nread) == 1
-              && nread == line.size()) {
-            // A regular include, with double quotes.  Probably a local file.
-            source_dir = full_fn.get_dirname();
-            incfn = incfile;
-
-          } else if (sscanf(line.c_str(), " # pragma%*[ \t]include <%2047[^>]> %zn", incfile, &nread) == 1
-              && nread == line.size()) {
-            // Angled includes are also OK, but we don't search in the directory
-            // of the source file.
-            incfn = incfile;
-
-          } else {
-            // Couldn't parse it.
-            shader_cat.error()
-              << "Malformed #pragma include at line " << lineno
-              << " of file " << fn << ":\n  " << line << "\n";
-            return false;
-          }
-        }
-
-        // OK, great.  Process the include.
-        if (!r_preprocess_include(out, incfn, source_dir, once_files, record, depth + 1)) {
-          // An error occurred.  Pass on the failure.
-          shader_cat.error(false) << "included at line "
-            << lineno << " of file " << fn << ":\n  " << line << "\n";
-          return false;
-        }
-
-        // Restore the line counter.
-        write_line_directive = true;
-        had_include = true;
-        continue;
-
-      } else if (strcmp(pragma, "once") == 0) {
-        // Do a stricter syntax check, just to be extra safe.
-        if (sscanf(line.c_str(), " # pragma%*[ \t]once %zn", &nread) != 0 ||
-            nread != line.size()) {
-          shader_cat.error()
-            << "Malformed #pragma once at line " << lineno
-            << " of file " << fn << ":\n  " << line << "\n";
-          return false;
-        }
-
-        if (fileno == 0) {
-          shader_cat.warning()
-            << "#pragma once in main file at line "
-            << lineno << " of file " << fn
-#ifndef NDEBUG
-            << ":\n  " << line
-#endif
-            << "\n";
-        }
-
-        if (!full_fn.empty()) {
-          once_files.insert(full_fn);
-        }
-        continue;
-      }
-      // Otherwise, just pass it through to the driver.
-
-    } else if (strcmp(directive, "endif") == 0) {
-      // Check for an #endif after an include.  We have to restore the line
-      // number in case the include happened under an #if block.
-      if (had_include) {
-        write_line_directive = true;
-      }
-
-    } else if (strcmp(directive, "version") == 0) {
-      had_version = true;
-
-    } else if (strcmp(directive, "extension") == 0) {
-      // Check for special preprocessing extensions.
-      char extension[256];
-      char behavior[9];
-      if (sscanf(line.c_str(), " # extension%*[ \t]%255[^: \t] : %8s", extension, behavior) == 2) {
-        // Parse the behavior string.
-        int mode;
-        if (strcmp(behavior, "require") == 0 || strcmp(behavior, "enable") == 0) {
-          mode = 2;
-        } else if (strcmp(behavior, "warn") == 0) {
-          mode = 1;
-        } else if (strcmp(behavior, "disable") == 0) {
-          mode = 0;
-        } else {
-          shader_cat.error()
-            << "Extension directive specifies invalid behavior at line "
-            << lineno << " of file " << fn << ":\n  " << line << "\n";
-          return false;
-        }
-
-        if (strcmp(extension, "all") == 0) {
-          if (mode == 2) {
-            shader_cat.error()
-              << "Extension directive for 'all' may only specify 'warn' or "
-                 "'disable' at line " << lineno << " of file " << fn
-              << ":\n  " << line << "\n";
-            return false;
-          }
-          ext_google_include = mode;
-          ext_google_line = mode;
-          // Still pass it through to the driver, so it can enable other
-          // extensions.
-
-        } else if (strcmp(extension, "GL_GOOGLE_include_directive") == 0) {
-          // Enable the Google extension support for #include statements.
-          // This also implicitly enables GL_GOOGLE_cpp_style_line_directive.
-          // This matches the behavior of Khronos' glslang reference compiler.
-          ext_google_include = mode;
-          ext_google_line = mode;
-          continue;
-
-        } else if (strcmp(extension, "GL_GOOGLE_cpp_style_line_directive") == 0) {
-          // Enables strings in #line statements.
-          ext_google_line = mode;
-          continue;
-        }
-      } else {
-        shader_cat.error()
-          << "Failed to parse extension directive at line "
-          << lineno << " of file " << fn << ":\n  " << line << "\n";
-        return false;
-      }
-
-    } else if (ext_google_include > 0 && strcmp(directive, "include") == 0) {
-      // Warn about extension use if requested.
-      if (ext_google_include == 1) {
-        shader_cat.warning()
-          << "Extension GL_GOOGLE_include_directive is being used at line "
-          << lineno << " of file " << fn
-#ifndef NDEBUG
-          << ":\n  " << line
-#endif
-          << "\n";
-      }
-
-      // This syntax allows only double quotes, not angle brackets.
-      Filename incfn;
-      {
-        char incfile[2048];
-        if (sscanf(line.c_str(), " # include%*[ \t]\"%2047[^\"]\" %zn", incfile, &nread) != 1
-            || nread != line.size()) {
-          // Couldn't parse it.
-          shader_cat.error()
-            << "Malformed #include at line " << lineno
-            << " of file " << fn << ":\n  " << line << "\n";
-          return false;
-        }
-        incfn = incfile;
-      }
-
-      // OK, great.  Process the include.
-      Filename source_dir = full_fn.get_dirname();
-      if (!r_preprocess_include(out, incfn, source_dir, once_files, record, depth + 1)) {
-        // An error occurred.  Pass on the failure.
-        shader_cat.error(false) << "included at line "
-          << lineno << " of file " << fn << ":\n  " << line << "\n";
-        return false;
-      }
-
-      // Restore the line counter.
-      write_line_directive = true;
-      had_include = true;
-      continue;
-
-    } else if (ext_google_line > 0 && strcmp(directive, "line") == 0) {
-      // It's a #line directive.  See if it uses a string instead of number.
-      char filestr[2048];
-      if (sscanf(line.c_str(), " # line%*[ \t]%d%*[ \t]\"%2047[^\"]\" %zn", &lineno, filestr, &nread) == 2
-          && nread == line.size()) {
-        // Warn about extension use if requested.
-        if (ext_google_line == 1) {
-          shader_cat.warning()
-            << "Extension GL_GOOGLE_cpp_style_line_directive is being used at line "
-            << lineno << " of file " << fn
-#ifndef NDEBUG
-            << ":\n  " << line
-#endif
-            << "\n";
-        }
-
-        // Replace the string line number with an integer.  This is something
-        // we can substitute later when parsing the GLSL log from the driver.
-        fileno = 2048 + _included_files.size();
-        _included_files.push_back(Filename(filestr));
-
-        out << "#line " << lineno << " " << fileno << " // " << filestr << "\n";
-        continue;
-      }
-    }
-
-    if (write_line_directive) {
-      out << "#line " << lineno << " " << fileno << " // " << fn << "\n";
-      write_line_directive = false;
-    }
-    out << line << "\n";
-  }
-
-  if (fileno == 0 && !had_version) {
-    shader_cat.warning()
-      << "GLSL shader " << fn << " does not contain a #version line!\n";
-  }
-
-  return true;
-}
-
-/**
- * Checks whether the shader or any of its dependent files were modified on
- * disk.
- */
-bool Shader::
-check_modified() const {
-  VirtualFileSystem *vfs = VirtualFileSystem::get_global_ptr();
-
-  pvector<Filename>::const_iterator it;
-  for (it = _source_files.begin(); it != _source_files.end(); ++it) {
-    const Filename &fn = (*it);
-
-    PT(VirtualFile) vfile = vfs->get_file(fn, true);
-    if (vfile == nullptr || vfile->get_timestamp() > _last_modified) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-#ifdef HAVE_CG
-/**
- * Determines the appropriate active shader profile settings based on any
- * profile directives stored within the shader header
- */
-void Shader::
-cg_get_profile_from_header(ShaderCaps& caps) {
-  // Note this forces profile based on what is specified in the shader header
-  // string.  Should probably be relying on card caps eventually.
-
-  string buf;
-  parse_init();
-
-  // Assume that if parse doesn't extend after a parse line then we've reached
-  // the end of _text
-  int lastParse;
-
-  do {
-    lastParse = _parse;
-    parse_line(buf, true, true);
-    int profilePos = buf.find("//Cg profile");
-    if (profilePos >= 0) {
-      // Scan the line for known cg2 vertex program profiles
-      if ((int)buf.find("gp4vp") >= 0)
-        caps._active_vprofile = cgGetProfile("gp4vp");
-
-      if ((int)buf.find("gp5vp") >= 0)
-        caps._active_vprofile = cgGetProfile("gp5vp");
-
-      if ((int)buf.find("glslv") >= 0)
-        caps._active_vprofile = cgGetProfile("glslv");
-
-      if ((int)buf.find("arbvp1") >= 0)
-        caps._active_vprofile = cgGetProfile("arbvp1");
-
-      if ((int)buf.find("vp40") >= 0)
-        caps._active_vprofile = cgGetProfile("vp40");
-
-      if ((int)buf.find("vp30") >= 0)
-        caps._active_vprofile = cgGetProfile("vp30");
-
-      if ((int)buf.find("vp20") >= 0)
-        caps._active_vprofile = cgGetProfile("vp20");
-
-      if ((int)buf.find("vs_1_1") >= 0)
-        caps._active_vprofile = cgGetProfile("vs_1_1");
-
-      if ((int)buf.find("vs_2_0") >= 0)
-        caps._active_vprofile = cgGetProfile("vs_2_0");
-
-      if ((int)buf.find("vs_2_x") >= 0)
-        caps._active_vprofile = cgGetProfile("vs_2_x");
-
-      if ((int)buf.find("vs_3_0") >= 0)
-        caps._active_vprofile = cgGetProfile("vs_3_0");
-
-      if ((int)buf.find("vs_4_0") >= 0)
-        caps._active_vprofile = cgGetProfile("vs_4_0");
-
-      if ((int)buf.find("vs_5_0") >= 0)
-        caps._active_vprofile = cgGetProfile("vs_5_0");
-
-      // Scan the line for known cg2 fragment program profiles
-      if ((int)buf.find("gp4fp") >= 0)
-        caps._active_fprofile = cgGetProfile("gp4fp");
-
-      if ((int)buf.find("gp5fp") >= 0)
-        caps._active_fprofile = cgGetProfile("gp5fp");
-
-      if ((int)buf.find("glslf") >= 0)
-        caps._active_fprofile = cgGetProfile("glslf");
-
-      if ((int)buf.find("arbfp1") >= 0)
-        caps._active_fprofile = cgGetProfile("arbfp1");
-
-      if ((int)buf.find("fp40") >= 0)
-        caps._active_fprofile = cgGetProfile("fp40");
-
-      if ((int)buf.find("fp30") >= 0)
-        caps._active_fprofile = cgGetProfile("fp30");
-
-      if ((int)buf.find("fp20") >= 0)
-        caps._active_fprofile = cgGetProfile("fp20");
-
-      if ((int)buf.find("ps_1_1") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_1_1");
-
-      if ((int)buf.find("ps_1_2") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_1_2");
-
-      if ((int)buf.find("ps_1_3") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_1_3");
-
-      if ((int)buf.find("ps_2_0") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_2_0");
-
-      if ((int)buf.find("ps_2_x") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_2_x");
-
-      if ((int)buf.find("ps_3_0") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_3_0");
-
-      if ((int)buf.find("ps_4_0") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_4_0");
-
-      if ((int)buf.find("ps_5_0") >= 0)
-        caps._active_fprofile = cgGetProfile("ps_5_0");
-
-      // Scan the line for known cg2 geometry program profiles
-      if ((int)buf.find("gp4gp") >= 0)
-        caps._active_gprofile = cgGetProfile("gp4gp");
-
-      if ((int)buf.find("gp5gp") >= 0)
-        caps._active_gprofile = cgGetProfile("gp5gp");
-
-      if ((int)buf.find("glslg") >= 0)
-        caps._active_gprofile = cgGetProfile("glslg");
-
-      if ((int)buf.find("gs_4_0") >= 0)
-        caps._active_gprofile = cgGetProfile("gs_4_0");
-
-      if ((int)buf.find("gs_5_0") >= 0)
-        caps._active_gprofile = cgGetProfile("gs_5_0");
-    }
-  } while(_parse > lastParse);
-
-}
-#endif
 
 /**
  * Delete the compiled code, if it exists.
@@ -3464,31 +73,803 @@ Shader::
 }
 
 /**
- * Returns the filename of the included shader with the given source file
- * index (as recorded in the #line statement in r_preprocess_source).  We use
- * this to associate error messages with included files.
+ * Used by SpirVDebugOutputPass, this ensures that the given assertion is
+ * registered.
  */
-Filename Shader::
-get_filename_from_index(int index, ShaderType type) const {
-  if (index == 0) {
-    Filename fn = get_filename(type);
-    if (!fn.empty()) {
-      return fn;
+size_t Shader::DebugInfo::
+add_assert(std::string expression, Filename fn, int line, Stage stage) {
+  LightMutexHolder holder(_lock);
+  size_t assert_id = 0;
+  Assertion assertion{std::move(expression), std::move(fn), line, std::move(stage)};
+  for (assert_id = 0; assert_id < _asserts.size(); ++assert_id) {
+    if (_asserts[assert_id]._expression == assertion._expression &&
+        _asserts[assert_id]._file == assertion._file &&
+        _asserts[assert_id]._line == assertion._line &&
+        _asserts[assert_id]._stage == assertion._stage) {
+      break;
     }
-  } else if (glsl_preprocess && index >= 2048 &&
-             (index - 2048) < (int)_included_files.size()) {
-    return _included_files[(size_t)index - 2048];
   }
-  // Must be a mistake.  Quietly put back the integer.
-  string str = format_string(index);
-  return Filename(str);
+  nassertr(assert_id < _assert_count, 0);
+  if (assert_id == _asserts.size()) {
+    _asserts.push_back(std::move(assertion));
+  }
+  return assert_id;
+}
+
+/**
+ * Returns how many bytes have been consumed.
+ */
+size_t Shader::DebugInfo::
+process_buffer(const unsigned char *data, size_t size, const Filename &fn) {
+  LightMutexHolder holder(_lock);
+  if (_asserts.empty() && _strings.is_empty()) {
+    // Nothing to do.
+    return 0;
+  }
+
+  const uint32_t *begin = (const uint32_t *)data;
+  const uint32_t *end = (const uint32_t *)data + size;
+
+  const uint32_t *ptr = begin;
+  uint32_t count = *ptr++;
+
+  if (shader_cat.is_debug()) {
+    shader_cat.debug()
+      << "Shader " << fn << " debug print log contains " << count << " words\n";
+  }
+
+  // Per assertion we store a count of how many times it triggered, as well as
+  // the invocation id (or the equivalent for this shader type).
+  const DebugInfo::Assertion *first_assert = nullptr;
+  for (size_t i = 0; i < _assert_count; ++i) {
+    if (i >= _asserts.size()) {
+      ptr += 4;
+      continue;
+    }
+    const DebugInfo::Assertion &assert = _asserts[i];
+    uint32_t assert_count = *ptr++;
+    union {
+      float f;
+      int32_t i;
+      uint32_t u;
+    } invoc_x, invoc_y, invoc_z;
+    invoc_x.u = *ptr++;
+    invoc_y.u = *ptr++;
+    invoc_z.u = *ptr++;
+
+    if (assert_count > 0) {
+      if (first_assert == nullptr) {
+        first_assert = &assert;
+      }
+
+      auto &out = shader_cat.error()
+        << "Shader assertion " << assert._expression << " at "
+        << assert._file << ":" << assert._line << " failed "
+        << assert_count << " times";
+
+      switch (assert._stage) {
+      case Stage::VERTEX:
+        out << "; first observed at vertex " << invoc_x.i << ", instance " << invoc_y.i << "\n";
+        break;
+
+      case Stage::GEOMETRY:
+      case Stage::TESS_CONTROL:
+        out << "; first observed at primitive " << invoc_x.i << ", invocation " << invoc_y.i << "\n";
+        break;
+
+      case Stage::TESS_EVALUATION:
+        out << "; first observed at primitive " << invoc_x.i << ", coord (" << invoc_y.f << ", " << invoc_z.f << ")\n";
+        break;
+
+      case Stage::FRAGMENT:
+        out << "; first observed at fragment (" << invoc_x.f << ", " << invoc_y.f << ") depth " << invoc_z.f << "\n";
+        break;
+
+      case Stage::COMPUTE:
+        out << "; first observed at invocation (" << invoc_x.u << ", " << invoc_y.u << ", " << invoc_z.u << ")\n";
+        break;
+
+      default:
+        out << "\n";
+        break;
+      }
+    }
+  }
+
+  // Now handle the print statements.  If the shader produced more output than
+  // fits in the buffer, the GPU dropped the excess; warn the user that some
+  // output was lost and how to capture it next time.
+  bool truncated = count > (uint32_t)(end - ptr);
+  if (truncated) {
+    shader_cat.warning()
+      << "Shader " << fn << " produced " << count
+      << " words of debug output, but only " << (end - ptr)
+      << " fit in the debug buffer; output was truncated.  Increase "
+         "shader-debug-buffer-size to capture more.\n";
+  }
+
+  char buf[1024];
+
+  end = std::min(end, ptr + count);
+  while (ptr != end) {
+    uint32_t index = *ptr++;
+
+    // We deliberately reserved string id 0 so that we can catch shaders
+    // having incremented the count but not written the string
+    if (index == 0 || index - 1 >= _strings.size()) {
+      if (index != 0 || !truncated) {
+        shader_cat.error()
+          << "Shader debug log is corrupt, encountered invalid string index " << index << "\n";
+      }
+      break;
+    }
+    const std::string &string = _strings.get_key(index - 1);
+
+    auto &out = nout;
+
+    const char *fmt = string.c_str();
+    while (*fmt != 0) {
+      char c = *fmt++;
+      if (c != '%') {
+        out.put(c);
+        continue;
+      }
+
+      c = *fmt++;
+      if (c == '%' || c == 0) {
+        out.put(c);
+        continue;
+      }
+
+      std::string format = "%";
+      while (!isalpha(c)) {
+        format += c;
+        c = *fmt++;
+      }
+      format += c;
+
+      union {
+        float f;
+        int32_t i;
+        uint32_t u;
+      } arg;
+      arg.u = *ptr++;
+
+      // Note that this string will never contain vector specifiers, those
+      // were expanded to individual arguments by SpirVDebugOutputPass.
+      if (c == 'u' || c == 'x' || c == 'X' || c == 'o') {
+        // Unsigned integer
+        snprintf(buf, sizeof(buf), format.c_str(), (unsigned int)arg.u);
+      }
+      else if (c == 'i' || c == 'd' || c == 'c') {
+        // Signed integer
+        snprintf(buf, sizeof(buf), format.c_str(), (int)arg.i);
+      }
+      else if (c == 'a' || c == 'A' || c == 'e' || c == 'E' || c == 'f' || c == 'F' || c == 'g' || c == 'G') {
+        // Floating-point
+        snprintf(buf, sizeof(buf), format.c_str(), (double)arg.f);
+      }
+      else if (c == 's') {
+        // %s got converted to the appropriate type, except for bool, which
+        // doesn't have its own format code.
+        out << (arg.u ? "true" : "false");
+        continue;
+      }
+      out << buf;
+    }
+    out.put('\n');
+  }
+  nout.flush();
+
+  if (first_assert != nullptr) {
+    Notify::ptr()->assert_failure(first_assert->_expression,
+                                  first_assert->_line,
+                                  first_assert->_file.c_str());
+  }
+
+  return ptr - begin;
+}
+
+/**
+ * Generate an error message including a description of the specified
+ * parameter.  Always returns false.
+ */
+bool Shader::
+report_parameter_error(const InternalName *name, const ShaderType *type, const char *msg) {
+  Filename fn = get_filename();
+  shader_cat.error()
+    << fn << ": " << *type << ' ' << *name << ": " << msg << "\n";
+  return false;
+}
+
+/**
+ * Adds a part to the matrix cache, if it doesn't already exist, and returns
+ * the index.
+ */
+size_t Shader::
+add_matrix_cache_item(StateMatrix input, const InternalName *arg, int dep) {
+  // Do we already have a spot in the cache for this part?
+  size_t index;
+  for (index = 0; index < _matrix_cache_desc.size(); ++index) {
+    MatrixCacheItem &part = _matrix_cache_desc[index];
+    if (part._part == input && part._arg == arg) {
+      part._dep |= dep;
+      break;
+    }
+  }
+  if (index == _matrix_cache_desc.size()) {
+    // Didn't find this part yet, create a new one.
+    MatrixCacheItem part;
+    part._part = input;
+    part._dep = dep;
+    part._arg = arg;
+
+    _matrix_cache_deps |= part._dep;
+    _matrix_cache_desc.push_back(std::move(part));
+  }
+  return index;
+}
+
+/**
+ * Returns the total size of the matrix part cache in terms of number of
+ * matrices.
+ */
+size_t Shader::
+get_matrix_cache_size() const {
+  return _matrix_cache_desc.size();
+}
+
+/**
+ * Called by the back-end when the shader has compiled data available.
+ */
+void Shader::
+set_compiled(unsigned int format, const char *data, size_t length) {
+  _compiled_format = format;
+  _compiled_binary.assign(data, length);
+
+  // Store the compiled shader in the cache.
+  /*if (_cache_compiled_shader && !_record.is_null()) {
+    _record->set_data(this);
+
+    BamCache *cache = BamCache::get_global_ptr();
+    cache->store(_record);
+  }*/
+}
+
+/**
+ * Called by the back-end to retrieve compiled data.
+ */
+bool Shader::
+get_compiled(unsigned int &format, string &binary) const {
+  format = _compiled_format;
+  binary = _compiled_binary;
+  return !binary.empty();
+}
+
+/**
+ * Reads the shader from the given filename(s). Returns a boolean indicating
+ * success or failure.
+ */
+bool Shader::
+read(const ShaderFile &sfile, const CompilerOptions &options, BamCacheRecord *record) {
+  _text._separate = sfile._separate;
+
+  PT(BamCacheRecord) record2;
+  BamCache *cache;
+
+  if (sfile._separate) {
+    if (_language == SL_none) {
+      shader_cat.error()
+        << "No shader language was specified!\n";
+      return false;
+    }
+
+    // Read the various stages in order.
+    if (!sfile._vertex.empty() &&
+        !do_read_source(Stage::VERTEX, sfile._vertex, options, record)) {
+      return false;
+    }
+    if (!sfile._tess_control.empty() &&
+        !do_read_source(Stage::TESS_CONTROL, sfile._tess_control, options, record)) {
+      return false;
+    }
+    if (!sfile._tess_evaluation.empty() &&
+        !do_read_source(Stage::TESS_EVALUATION, sfile._tess_evaluation, options, record)) {
+      return false;
+    }
+    if (!sfile._geometry.empty() &&
+        !do_read_source(Stage::GEOMETRY, sfile._geometry, options, record)) {
+      return false;
+    }
+    if (!sfile._fragment.empty() &&
+        !do_read_source(Stage::FRAGMENT, sfile._fragment, options, record)) {
+      return false;
+    }
+    if (!sfile._compute.empty() &&
+        !do_read_source(Stage::COMPUTE, sfile._compute, options, record)) {
+      return false;
+    }
+    _filename = sfile;
+  }
+  else if (_language == SL_Cg || _language == SL_none) {
+    // For historical reasons, we have to open up this file early to determine
+    // some things about it.
+    Filename fn = sfile._shared;
+    VirtualFileSystem *vfs = VirtualFileSystem::get_global_ptr();
+    PT(VirtualFile) vf = vfs->find_file(fn, get_model_path());
+    if (vf == nullptr) {
+      shader_cat.error()
+        << "Could not find shader file: " << fn << "\n";
+      return false;
+    }
+
+    // Single-file shaders are cached in their linked form in one big file.
+    Filename fullpath = vf->get_filename();
+    cache = BamCache::get_global_ptr();
+    if (cache->get_cache_compiled_shaders()) {
+      record2 = cache->lookup(fullpath, "sho");
+      if (record2 != nullptr && record2->has_data()) {
+        PT(Shader) shader = DCAST(Shader, record2->get_data());
+
+        if (!shader->_modules.empty()) {
+          shader_cat.info()
+            << "Shader " << fn << " found in disk cache.\n";
+
+          *this = *shader;
+          _debug_name = fullpath.get_basename();
+          _prepare_shader_pcollector = PStatCollector(std::string("Draw:Prepare:Shader:") + _debug_name);
+          return true;
+        }
+      }
+    }
+
+    std::string source;
+    if (!vf->read_file(source, true)) {
+      shader_cat.error()
+        << "Could not read shader file: " << fn << "\n";
+      return false;
+    }
+
+    if (_language == SL_none && !has_cg_header(source)) {
+      shader_cat.error()
+        << "Unable to determine shader language of " << fn << "\n";
+      return false;
+    }
+    _language = SL_Cg;
+    _filename = sfile;
+
+    shader_cat.info()
+      << "Compiling Cg shader: " << fn << "\n";
+
+    ShaderCompilerRegistry *registry = ShaderCompilerRegistry::get_global_ptr();
+    ShaderCompiler *compiler = registry->get_compiler_for_language(SL_Cg);
+    nassertr(compiler != nullptr, false);
+
+    CompilerOptions options;
+    std::istringstream in(source);
+
+    PT(ShaderModule) vertex = compiler->compile_now(Stage::VERTEX, in, fullpath, options, nullptr, record);
+    if (vertex == nullptr || !add_module(std::move(vertex))) {
+      return false;
+    }
+    if (source.find("gshader") != string::npos) {
+      in.clear();
+      in.seekg(0);
+      PT(ShaderModule) geometry = compiler->compile_now(Stage::GEOMETRY, in, fullpath, options, nullptr, record);
+      if (geometry == nullptr || !add_module(std::move(geometry))) {
+        return false;
+      }
+    }
+    in.clear();
+    in.seekg(0);
+    PT(ShaderModule) fragment = compiler->compile_now(Stage::FRAGMENT, in, fullpath, options, nullptr, record);
+    if (fragment == nullptr || !add_module(std::move(fragment))) {
+      return false;
+    }
+
+    _debug_name = fullpath.get_basename();
+  }
+  else {
+    shader_cat.error()
+      << "GLSL shaders must have separate shader bodies!\n";
+    return false;
+  }
+
+  if (!link()) {
+    return false;
+  }
+
+  _prepare_shader_pcollector = PStatCollector(std::string("Draw:Prepare:Shader:") + _debug_name);
+
+  if (record2 != nullptr) {
+    // Note that we will call link() again after loading from the cache, but
+    // putting this here will make sure that we checked that it links correctly
+    // before we write it to the cache.
+    record2->set_data(this, this);
+    cache->store(record2);
+  }
+
+  return true;
+}
+
+/**
+ * Loads the shader from the given string(s). Returns a boolean indicating
+ * success or failure.
+ */
+bool Shader::
+load(const ShaderFile &sbody, const CompilerOptions &options, BamCacheRecord *record) {
+  _filename = ShaderFile("created-shader");
+  _fullpath = Filename();
+  _text._separate = sbody._separate;
+
+  if (sbody._separate) {
+    if (_language == SL_none) {
+      shader_cat.error()
+        << "No shader language was specified!\n";
+      return false;
+    }
+
+    if (!sbody._vertex.empty() &&
+        !do_load_source(Stage::VERTEX, sbody._vertex, options, record)) {
+      return false;
+    }
+    if (!sbody._tess_control.empty() &&
+        !do_load_source(Stage::TESS_CONTROL, sbody._tess_control, options, record)) {
+      return false;
+    }
+    if (!sbody._tess_evaluation.empty() &&
+        !do_load_source(Stage::TESS_EVALUATION, sbody._tess_evaluation, options, record)) {
+      return false;
+    }
+    if (!sbody._geometry.empty() &&
+        !do_load_source(Stage::GEOMETRY, sbody._geometry, options, record)) {
+      return false;
+    }
+    if (!sbody._fragment.empty() &&
+        !do_load_source(Stage::FRAGMENT, sbody._fragment, options, record)) {
+      return false;
+    }
+    if (!sbody._compute.empty() &&
+        !do_load_source(Stage::COMPUTE, sbody._compute, options, record)) {
+      return false;
+    }
+
+  } else if (_language == SL_Cg || _language == SL_none) {
+    if (_language == SL_none && !has_cg_header(sbody._shared)) {
+      shader_cat.error()
+        << "Unable to determine shader language of created-shader\n";
+      return false;
+    }
+    _language = SL_Cg;
+
+    if (!do_load_source(Stage::VERTEX, sbody._shared, options, record)) {
+      return false;
+    }
+    if (!do_load_source(Stage::FRAGMENT, sbody._shared, options, record)) {
+      return false;
+    }
+    if (sbody._shared.find("gshader") != string::npos &&
+        !do_load_source(Stage::GEOMETRY, sbody._shared, options, record)) {
+      return false;
+    }
+
+  } else {
+    shader_cat.error()
+      << "GLSL shaders must have separate shader bodies!\n";
+    return false;
+  }
+
+  if (!link()) {
+    shader_cat.error()
+      << "Failed to link shader.\n";
+    return false;
+  }
+
+  _debug_name = "created-shader";
+  _prepare_shader_pcollector = PStatCollector("Draw:Prepare:Shader:created-shader");
+  return true;
+}
+
+/**
+ * Reads the shader file from the given path into the given string.
+ *
+ * Returns false if there was an error with this shader bad enough to consider
+ * it 'invalid'.
+ */
+bool Shader::
+do_read_source(Stage stage, const Filename &fn, const CompilerOptions &options, BamCacheRecord *record) {
+  ShaderCompilerRegistry *registry = ShaderCompilerRegistry::get_global_ptr();
+  ShaderCompiler *compiler = registry->get_compiler_for_language(_language);
+  nassertr(compiler != nullptr, false);
+
+  PT(ShaderModule) module = compiler->compile_now(stage, fn, options, nullptr, record);
+  if (!module) {
+    return false;
+  }
+  nassertr(stage == module->get_stage(), false);
+
+  if (!add_module(std::move(module))) {
+    return false;
+  }
+
+  if (!_debug_name.empty()) {
+    _debug_name += '/';
+  }
+  _debug_name += fn.get_basename();
+
+  return true;
+}
+
+/**
+ * Loads the shader file from the given string into the given string,
+ * performing any pre-processing on it that may be necessary.
+ *
+ * Returns false if there was an error with this shader bad enough to consider
+ * it 'invalid'.
+ */
+bool Shader::
+do_read_source(ShaderModule::Stage stage, std::istream &in,
+               const Filename &fullpath, const CompilerOptions &options,
+               BamCacheRecord *record) {
+  ShaderCompilerRegistry *registry = ShaderCompilerRegistry::get_global_ptr();
+  ShaderCompiler *compiler = registry->get_compiler_for_language(_language);
+  nassertr(compiler != nullptr, false);
+
+  PT(ShaderModule) module = compiler->compile_now(stage, in, fullpath, options, nullptr, record);
+  if (!module) {
+    return false;
+  }
+  nassertr(stage == module->get_stage(), false);
+
+  return add_module(std::move(module));
+}
+
+/**
+ * Loads the shader file from the given string into the given string,
+ * performing any pre-processing on it that may be necessary.
+ *
+ * Returns false if there was an error with this shader bad enough to consider
+ * it 'invalid'.
+ */
+bool Shader::
+do_load_source(ShaderModule::Stage stage, const std::string &source,
+               const CompilerOptions &options, BamCacheRecord *record) {
+  std::istringstream in(source);
+  return do_read_source(stage, in, Filename("created-shader"), options, record);
+}
+
+/**
+ * Completes the binding between the different shader stages.
+ */
+bool Shader::
+link() {
+  nassertr(!_modules.empty(), false);
+
+  // Go through all the modules to fetch the parameters.
+  pmap<CPT_InternalName, Parameter> parameters_by_name;
+  pvector<Parameter *> parameters;
+
+  pmap<CPT_InternalName, const ShaderType *> spec_const_types;
+
+  for (LinkedModule &linked_module : _modules) {
+    const ShaderModule *module = linked_module._module.get_read_pointer();
+    pmap<int, int> remap;
+
+    for (const ShaderModule::Variable &var : module->_parameters) {
+      Parameter param;
+      param._name = var.name;
+      param._type = var.type;
+      param._stage_mask = (1 << (int)module->get_stage());
+
+      auto result = parameters_by_name.insert({var.name, param});
+      auto &it = result.first;
+
+      if (result.second) {
+        parameters.push_back(&(it->second));
+      } else {
+        // A variable by this name was already added by another stage.  Check
+        // that it has the same type and location.
+        Parameter &other = it->second;
+        if (other._type != var.type) {
+          shader_cat.error()
+            << "Parameter " << *var.name << " in module " << *module
+            << " is declared in another stage with a mismatching type!\n";
+          return false;
+        }
+
+        // Aggregate types don't seem to work properly when sharing uniforms
+        // between shader stages.  Needs revisiting.
+        if (!var.type->is_aggregate_type()) {
+          other._stage_mask |= param._stage_mask;
+          continue;
+        }
+      }
+    }
+
+    for (const ShaderModule::SpecializationConstant &spec_const : module->_spec_constants) {
+      auto result = spec_const_types.insert({spec_const.name, spec_const.type});
+      auto &it = result.first;
+
+      if (!result.second) {
+        // Another module has already defined a spec constant with this name.
+        // Make sure they have the same type.
+        const ShaderType *other_type = it->second;
+        if (spec_const.type != other_type) {
+          shader_cat.error()
+            << "Specialization constant " << *spec_const.name << " in module "
+            << *module << " is declared in another stage with a mismatching type!\n";
+          return false;
+        }
+      }
+    }
+  }
+
+  // Now bind all of the parameters.
+  bool success = true;
+  for (const Parameter *param : parameters) {
+    ShaderInputBinding *binding = ShaderInputBinding::make(_language, param->_name, param->_type);
+    _parameters.push_back(*param);
+    if (binding != nullptr) {
+      binding->setup(this);
+      _parameters.back()._binding = binding;
+    } else {
+      shader_cat.error()
+        << "Failed to bind parameter " << *param->_name << " with type "
+        << *param->_type << "\n";
+      success = false;
+    }
+  }
+
+  return success;
+}
+
+void Shader::
+add_parameter(const InternalName *name, const ShaderType *type, int location) {
+  {
+    Shader::Parameter param;
+    param._name = name;
+    param._type = type;
+    param._binding = ShaderInputBinding::make(_language, name, type);
+    param._location = location;
+    _parameters.push_back(std::move(param));
+  }
+
+  Shader::Parameter &param = _parameters.back();
+  if (param._binding != nullptr) {
+    param._binding->setup(this);
+  } else {
+    shader_cat.error()
+      << "Failed to bind parameter " << *name << " with type "
+      << *type << "\n";
+  }
+}
+
+/**
+ * Binds a vertex input parameter with the given type.
+ */
+bool Shader::
+bind_vertex_input(const InternalName *name, const ShaderType *type, int location) {
+  std::string name_str = name->get_name();
+
+  VertexInputBinding bind;
+  bind._id._name = name_str;
+  bind._id._type = type;
+  bind._id._location = location;
+  bind._name = nullptr;
+  bind._append_uv = -1;
+
+  uint32_t dim[3];
+  if (!type->as_scalar_type(bind._scalar_type, dim[0], dim[1], dim[2])) {
+    shader_cat.error()
+      << "Unrecognized type " << *type << " for vertex input " << *name << "\n";
+  }
+  bind._elements = dim[0] * dim[1];
+
+  if (shader_cat.is_debug()) {
+    shader_cat.debug()
+      << "Binding vertex input " << name_str << " with type " << *type
+      << " and location " << location << "\n";
+  }
+
+  // Check if it has a p3d_ prefix - if so, assign special meaning.
+  if (_language == Shader::SL_GLSL && name_str.compare(0, 4, "p3d_") == 0) {
+    // GLSL-style vertex input.
+    if (name_str == "p3d_Vertex") {
+      bind._name = InternalName::get_vertex();
+    }
+    else if (name_str == "p3d_Normal") {
+      bind._name = InternalName::get_normal();
+    }
+    else if (name_str == "p3d_Color") {
+      bind._name = InternalName::get_color();
+    }
+    else if (name_str.compare(4, 7, "Tangent") == 0) {
+      bind._name = InternalName::get_tangent();
+      if (name_str.size() > 11) {
+        bind._append_uv = atoi(name_str.substr(11).c_str());
+      }
+    }
+    else if (name_str.compare(4, 8, "Binormal") == 0) {
+      bind._name = InternalName::get_binormal();
+      if (name_str.size() > 12) {
+        bind._append_uv = atoi(name_str.substr(12).c_str());
+      }
+    }
+    else if (name_str.compare(4, 13, "MultiTexCoord") == 0 && name_str.size() > 17) {
+      bind._name = InternalName::get_texcoord();
+      bind._append_uv = atoi(name_str.substr(17).c_str());
+    }
+    else if (name_str == "p3d_InstanceMatrix") {
+      bind._name = InternalName::get_instance_matrix();
+
+      if (dim[1] != 4 || dim[2] != 3) {
+        return report_parameter_error(name, type, "expected mat4x3");
+      }
+    }
+    else {
+      shader_cat.error()
+        << "Unrecognized built-in vertex input name '" << name_str << "'!\n";
+      return false;
+    }
+  }
+  else if (_language == Shader::SL_Cg && name_str.compare(0, 4, "vtx_") == 0) {
+    // Cg-style vertex input.
+    if (name_str == "vtx_position") {
+      bind._name = InternalName::get_vertex();
+      bind._append_uv = -1;
+    }
+    else if (name_str.substr(4, 8) == "texcoord") {
+      bind._name = InternalName::get_texcoord();
+      if (name_str.size() > 12) {
+        bind._append_uv = atoi(name_str.c_str() + 12);
+      }
+    }
+    else if (name_str.substr(4, 7) == "tangent") {
+      bind._name = InternalName::get_tangent();
+      if (name_str.size() > 11) {
+        bind._append_uv = atoi(name_str.c_str() + 11);
+      }
+    }
+    else if (name_str.substr(4, 8) == "binormal") {
+      bind._name = InternalName::get_binormal();
+      if (name_str.size() > 11) {
+        bind._append_uv = atoi(name_str.c_str() + 11);
+      }
+    }
+    else {
+      bind._name = InternalName::make(name_str.substr(4));
+    }
+  }
+  else {
+    // Arbitrarily named attribute.
+    bind._name = InternalName::make(name_str);
+  }
+
+  _vertex_inputs.push_back(bind);
+  return true;
+}
+
+/**
+ * Checks whether the shader or any of its dependent files were modified on
+ * disk.
+ */
+bool Shader::
+check_modified() const {
+  for (const LinkedModule &linked_module : _modules) {
+    const ShaderModule *module = linked_module._module.get_read_pointer();
+
+    if (module->check_source_modified()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
  * Loads the shader with the given filename.
  */
 PT(Shader) Shader::
-load(const Filename &file, ShaderLanguage lang) {
+load(const Filename &file, SourceLanguage lang, const CompilerOptions &options) {
   ShaderFile sfile(file);
   ShaderTable::const_iterator i = _load_table.find(sfile);
   if (i != _load_table.end() && (lang == SL_none || lang == i->second->_language)) {
@@ -3506,19 +887,19 @@ load(const Filename &file, ShaderLanguage lang) {
   }
 
   PT(Shader) shader = new Shader(lang);
-  if (!shader->read(sfile)) {
+  if (!shader->read(sfile, options)) {
     return nullptr;
   }
 
   _load_table[sfile] = shader;
 
-  if (cache_generated_shaders) {
+  /*if (cache_generated_shaders) {
     ShaderTable::const_iterator i = _make_table.find(shader->_text);
     if (i != _make_table.end() && (lang == SL_none || lang == i->second->_language)) {
       return i->second;
     }
     _make_table[shader->_text] = shader;
-  }
+  }*/
   return shader;
 }
 
@@ -3526,9 +907,10 @@ load(const Filename &file, ShaderLanguage lang) {
  * This variant of Shader::load loads all shader programs separately.
  */
 PT(Shader) Shader::
-load(ShaderLanguage lang, const Filename &vertex,
+load(SourceLanguage lang, const Filename &vertex,
      const Filename &fragment, const Filename &geometry,
-     const Filename &tess_control, const Filename &tess_evaluation) {
+     const Filename &tess_control, const Filename &tess_evaluation,
+     const CompilerOptions &options) {
   ShaderFile sfile(vertex, fragment, geometry, tess_control, tess_evaluation);
   ShaderTable::const_iterator i = _load_table.find(sfile);
   if (i != _load_table.end() && (lang == SL_none || lang == i->second->_language)) {
@@ -3546,19 +928,19 @@ load(ShaderLanguage lang, const Filename &vertex,
   }
 
   PT(Shader) shader = new Shader(lang);
-  if (!shader->read(sfile)) {
+  if (!shader->read(sfile, options)) {
     return nullptr;
   }
 
   _load_table[sfile] = shader;
 
-  if (cache_generated_shaders) {
+  /*if (cache_generated_shaders) {
     ShaderTable::const_iterator i = _make_table.find(shader->_text);
     if (i != _make_table.end() && (lang == SL_none || lang == i->second->_language)) {
       return i->second;
     }
     _make_table[shader->_text] = shader;
-  }
+  }*/
   return shader;
 }
 
@@ -3566,7 +948,8 @@ load(ShaderLanguage lang, const Filename &vertex,
  * Loads a compute shader.
  */
 PT(Shader) Shader::
-load_compute(ShaderLanguage lang, const Filename &fn) {
+load_compute(SourceLanguage lang, const Filename &fn,
+             const CompilerOptions &options) {
   if (lang != SL_GLSL) {
     shader_cat.error()
       << "Only GLSL compute shaders are currently supported.\n";
@@ -3604,33 +987,35 @@ load_compute(ShaderLanguage lang, const Filename &fn) {
   PT(BamCacheRecord) record = cache->lookup(fullpath, "sho");
   if (record != nullptr) {
     if (record->has_data()) {
-      shader_cat.info()
-        << "Compute shader " << fn << " was found in disk cache.\n";
-
-      return DCAST(Shader, record->get_data());
+      PT(Shader) shader = DCAST(Shader, record->get_data());
+      if (shader->_module_mask == (1 << (int)Stage::COMPUTE)) {
+        shader_cat.info()
+          << "Compute shader " << fn << " was found in disk cache.\n";
+        return shader;
+      }
     }
   }
 
   PT(Shader) shader = new Shader(lang);
-
-  if (!shader->read(sfile, record)) {
+  if (!shader->read(sfile, options, record)) {
     return nullptr;
   }
+
   _load_table[sfile] = shader;
 
-  if (cache_generated_shaders) {
+  /*if (cache_generated_shaders) {
     ShaderTable::const_iterator i = _make_table.find(shader->_text);
     if (i != _make_table.end() && (lang == SL_none || lang == i->second->_language)) {
       return i->second;
     }
     _make_table[shader->_text] = shader;
-  }
+  }*/
 
   // It makes little sense to cache the shader before compilation, so we keep
   // the record for when we have the compiled the shader.
-  std::swap(shader->_record, record);
+  //shader->_record = std::move(record);
   shader->_cache_compiled_shader = BamCache::get_global_ptr()->get_cache_compiled_shaders();
-  shader->_fullpath = shader->_source_files[0];
+  shader->_fullpath = std::move(fullpath);
   return shader;
 }
 
@@ -3638,7 +1023,7 @@ load_compute(ShaderLanguage lang, const Filename &fn) {
  * Loads the shader, using the string as shader body.
  */
 PT(Shader) Shader::
-make(string body, ShaderLanguage lang) {
+make(string body, SourceLanguage lang, const CompilerOptions &options) {
   if (lang == SL_GLSL) {
     shader_cat.error()
       << "GLSL shaders must have separate shader bodies!\n";
@@ -3649,12 +1034,6 @@ make(string body, ShaderLanguage lang) {
       << "Shader::make() now requires an explicit shader language.  Assuming Cg.\n";
     lang = SL_Cg;
   }
-#ifndef HAVE_CG
-  if (lang == SL_Cg) {
-    shader_cat.error() << "Support for Cg shaders is not enabled.\n";
-    return nullptr;
-  }
-#endif
 
   ShaderFile sbody(std::move(body));
 
@@ -3669,11 +1048,11 @@ make(string body, ShaderLanguage lang) {
   }
 
   PT(Shader) shader = new Shader(lang);
-  if (!shader->load(sbody)) {
+  if (!shader->load(sbody, options)) {
     return nullptr;
   }
 
-  if (cache_generated_shaders) {
+  /*if (cache_generated_shaders) {
     ShaderTable::const_iterator i = _make_table.find(shader->_text);
     if (i != _make_table.end() && (lang == SL_none || lang == i->second->_language)) {
       shader = i->second;
@@ -3681,7 +1060,7 @@ make(string body, ShaderLanguage lang) {
       _make_table[shader->_text] = shader;
     }
     _make_table[std::move(sbody)] = shader;
-  }
+  }*/
 
   if (dump_generated_shaders) {
     ostringstream fns;
@@ -3702,14 +1081,8 @@ make(string body, ShaderLanguage lang) {
  * Loads the shader, using the strings as shader bodies.
  */
 PT(Shader) Shader::
-make(ShaderLanguage lang, string vertex, string fragment, string geometry,
-     string tess_control, string tess_evaluation) {
-#ifndef HAVE_CG
-  if (lang == SL_Cg) {
-    shader_cat.error() << "Support for Cg shaders is not enabled.\n";
-    return nullptr;
-  }
-#endif
+make(SourceLanguage lang, string vertex, string fragment, string geometry,
+     string tess_control, string tess_evaluation, const CompilerOptions &options) {
   if (lang == SL_none) {
     shader_cat.error()
       << "Shader::make() requires an explicit shader language.\n";
@@ -3731,11 +1104,11 @@ make(ShaderLanguage lang, string vertex, string fragment, string geometry,
 
   PT(Shader) shader = new Shader(lang);
   shader->_filename = ShaderFile("created-shader");
-  if (!shader->load(sbody)) {
+  if (!shader->load(sbody, options)) {
     return nullptr;
   }
 
-  if (cache_generated_shaders) {
+  /*if (cache_generated_shaders) {
     ShaderTable::const_iterator i = _make_table.find(shader->_text);
     if (i != _make_table.end() && (lang == SL_none || lang == i->second->_language)) {
       shader = i->second;
@@ -3743,7 +1116,7 @@ make(ShaderLanguage lang, string vertex, string fragment, string geometry,
       _make_table[shader->_text] = shader;
     }
     _make_table[std::move(sbody)] = shader;
-  }
+  }*/
 
   return shader;
 }
@@ -3752,7 +1125,7 @@ make(ShaderLanguage lang, string vertex, string fragment, string geometry,
  * Loads the compute shader from the given string.
  */
 PT(Shader) Shader::
-make_compute(ShaderLanguage lang, string body) {
+make_compute(SourceLanguage lang, string body, const CompilerOptions &options) {
   if (lang != SL_GLSL) {
     shader_cat.error()
       << "Only GLSL compute shaders are currently supported.\n";
@@ -3775,11 +1148,11 @@ make_compute(ShaderLanguage lang, string body) {
 
   PT(Shader) shader = new Shader(lang);
   shader->_filename = ShaderFile("created-shader");
-  if (!shader->load(sbody)) {
+  if (!shader->load(sbody, options)) {
     return nullptr;
   }
 
-  if (cache_generated_shaders) {
+  /*if (cache_generated_shaders) {
     ShaderTable::const_iterator i = _make_table.find(shader->_text);
     if (i != _make_table.end() && (lang == SL_none || lang == i->second->_language)) {
       shader = i->second;
@@ -3787,84 +1160,125 @@ make_compute(ShaderLanguage lang, string body) {
       _make_table[shader->_text] = shader;
     }
     _make_table[std::move(sbody)] = shader;
-  }
+  }*/
 
   return shader;
 }
 
 /**
- * Set a 'parse pointer' to the beginning of the shader.
- */
-void Shader::
-parse_init() {
-  _parse = 0;
-}
-
-/**
- * Parse a line of text.  If 'lt' is true, trim blanks from the left end of
- * the line.  If 'rt' is true, trim blanks from the right end (the newline is
- * always trimmed).
- */
-void Shader::
-parse_line(string &result, bool lt, bool rt) {
-  nassertv(!_text._separate);
-  int len = _text._shared.size();
-  int head = _parse;
-  int tail = head;
-  while ((tail < len) && (_text._shared[tail] != '\n')) {
-    tail++;
-  }
-  if (tail < len) {
-    _parse = tail+1;
-  } else {
-    _parse = tail;
-  }
-  if (lt) {
-    while ((head < tail)&&(isspace(_text._shared[head]))) head++;
-    while ((tail > head)&&(isspace(_text._shared[tail-1]))) tail--;
-  }
-  result = _text._shared.substr(head, tail-head);
-}
-
-/**
- * Parse lines until you read a line that matches the specified pattern.
- * Returns all the preceding lines, and if the include flag is set, returns
- * the final line as well.
- */
-void Shader::
-parse_upto(string &result, string pattern, bool include) {
-  nassertv(!_text._separate);
-  GlobPattern endpat(pattern);
-  int start = _parse;
-  int last = _parse;
-  while (_parse < (int)(_text._shared.size())) {
-    string t;
-    parse_line(t, true, true);
-    if (endpat.matches(t)) break;
-    last = _parse;
-  }
-  if (include) {
-    result = _text._shared.substr(start, _parse - start);
-  } else {
-    result = _text._shared.substr(start, last - start);
-  }
-}
-
-/**
- * Returns the rest of the text from the current parse location.
- */
-void Shader::
-parse_rest(string &result) {
-  nassertv(!_text._separate);
-  result = _text._shared.substr(_parse, _text._shared.size() - _parse);
-}
-
-/**
- * Returns true if the parse pointer is at the end of the shader.
+ * Adds a module to a shader. Returns true if it was added successfully, false
+ * if there was a problem. Modules must be added in increasing stage order and
+ * only one module of a given stage type may be added.
+ *
+ * If the ShaderModule is already used in a different Shader object, this may
+ * create a unique copy of it so that it may be modified to make it compatible
+ * with the other modules in this shader.
  */
 bool Shader::
-parse_eof() {
-  return (int)_text._shared.size() == _parse;
+add_module(PT(ShaderModule) module) {
+  nassertr(module != nullptr, false);
+
+  Stage stage = module->get_stage();
+  if (has_stage(stage)) {
+    shader_cat.error()
+      << "Shader already has a module with stage " << stage << ".\n";
+    return false;
+  }
+
+  if (_module_mask > (1u << (uint32_t)stage)) {
+    shader_cat.error()
+      << "Shader modules must be loaded in increasing stage order.\n";
+    return false;
+  }
+
+  uint64_t used_caps = module->get_used_capabilities();
+  uint32_t assert_count = module->_assert_count;
+
+  // Make sure that any modifications made to the module will not affect other
+  // Shader objects, by storing it as copy-on-write.
+  COWPT(ShaderModule) cow_module = std::move(module);
+
+  if (!_modules.empty()) {
+    // Link its inputs up with the previous stage.
+    pmap<int, int> location_remap;
+    {
+      CPT(ShaderModule) module = cow_module.get_read_pointer();
+      if (!module->link_inputs(_modules.back()._module.get_read_pointer(), location_remap)) {
+        shader_cat.error()
+          << "Unable to match shader module interfaces.\n";
+        return false;
+      }
+    }
+
+    if (!location_remap.empty()) {
+      // Make sure we have a unique copy so that we can do the remappings.
+      PT(ShaderModule) module = cow_module.get_write_pointer();
+      module->remap_input_locations(location_remap);
+    }
+  }
+  else if (stage == Stage::VERTEX) {
+    // Bind vertex inputs right away.
+    CPT(ShaderModule) module = cow_module.get_read_pointer();
+    bool success = true;
+    for (const ShaderModule::Variable &var : module->_inputs) {
+      if (!bind_vertex_input(var.name, var.type, var.get_location())) {
+        success = false;
+      }
+    }
+    if (!success) {
+      shader_cat.error()
+        << "Failed to bind vertex inputs.\n";
+      return false;
+    }
+  }
+
+  _modules.push_back(std::move(cow_module));
+  _module_mask |= (1u << (uint32_t)stage);
+  _used_caps |= used_caps;
+  _debug._assert_count += assert_count;
+  return true;
+}
+
+/**
+ * Sets an unsigned integer value for the specialization constant with the
+ * indicated name.  All modules containing a specialization constant with
+ * this name will be given this value.
+ *
+ * Returns true if there was a specialization constant with this name on any of
+ * the modules, false otherwise.
+ */
+bool Shader::
+set_constant(CPT_InternalName name, unsigned int value) {
+  bool any_changed = false;
+  bool any_found = false;
+
+  // Set the value on all modules containing a spec constant with this name.
+  for (LinkedModule &linked_module : _modules) {
+    const ShaderModule *module = linked_module._module.get_read_pointer();
+
+    for (const ShaderModule::SpecializationConstant &spec_const : module->_spec_constants) {
+      if (spec_const.name == name) {
+        // Found one.
+        if (linked_module._consts.set_constant(spec_const.id, value)) {
+          any_changed = true;
+        }
+        any_found = true;
+        break;
+      }
+    }
+  }
+
+  if (any_changed) {
+    if (shader_cat.is_debug()) {
+      shader_cat.debug()
+        << "Specialization constant value changed, forcing shader to "
+        << "re-prepare.\n";
+    }
+    // Force the shader to be re-prepared so the value change is picked up.
+    release_all();
+  }
+
+  return any_found;
 }
 
 /**
@@ -3937,6 +1351,26 @@ prepare_now(PreparedGraphicsObjects *prepared_objects,
     return (*ci).second;
   }
 
+  int supported_caps = gsg->get_supported_shader_capabilities();
+  int unsupported_caps = _used_caps & ~supported_caps;
+  if (unsupported_caps != 0) {
+    std::ostream &out = shader_cat.error()
+      << "Cannot load shader because the graphics back-end does not support ";
+
+    if (supported_caps == 0) {
+      out << "shaders.";
+    } else {
+      out << "these capabilities: ";
+      ShaderModule::output_capabilities(out, unsupported_caps);
+    }
+    out << std::endl;
+
+    // Insert nullptr so that we don't spam this error next time.
+    _contexts[prepared_objects] = nullptr;
+
+    return nullptr;
+  }
+
   ShaderContext *tc = prepared_objects->prepare_shader_now(this, gsg);
   _contexts[prepared_objects] = tc;
 
@@ -3992,23 +1426,6 @@ release_all() {
 }
 
 /**
- *
- */
-void Shader::ShaderCaps::
-clear() {
-  _supports_glsl = false;
-
-#ifdef HAVE_CG
-  _active_vprofile = CG_PROFILE_UNKNOWN;
-  _active_fprofile = CG_PROFILE_UNKNOWN;
-  _active_gprofile = CG_PROFILE_UNKNOWN;
-  _ultimate_vprofile = CG_PROFILE_UNKNOWN;
-  _ultimate_fprofile = CG_PROFILE_UNKNOWN;
-  _ultimate_gprofile = CG_PROFILE_UNKNOWN;
-#endif
-}
-
-/**
  * Tells the BamReader how to create objects of type Shader.
  */
 void Shader::
@@ -4023,12 +1440,24 @@ register_with_read_factory() {
 void Shader::
 write_datagram(BamWriter *manager, Datagram &dg) {
   dg.add_uint8(_language);
-  dg.add_bool(_loaded);
-  _filename.write_datagram(dg);
-  _text.write_datagram(dg);
 
   dg.add_uint32(_compiled_format);
   dg.add_string(_compiled_binary);
+
+  dg.add_uint32(_module_mask);
+
+  for (const LinkedModule &linked_module : _modules) {
+    CPT(ShaderModule) module = linked_module._module.get_read_pointer();
+
+    Filename fn;
+    //Filename fn = module->get_source_filename();
+    dg.add_string(fn);
+
+    if (fn.empty()) {
+      // This module was not read from a file, so write the module itself too.
+      manager->write_pointer(dg, module);
+    }
+  }
 }
 
 /**
@@ -4038,13 +1467,64 @@ write_datagram(BamWriter *manager, Datagram &dg) {
  */
 TypedWritable *Shader::
 make_from_bam(const FactoryParams &params) {
-  Shader *attrib = new Shader(SL_none);
+  Shader *shader = new Shader(SL_none);
   DatagramIterator scan;
   BamReader *manager;
 
   parse_params(params, scan, manager);
-  attrib->fillin(scan, manager);
-  return attrib;
+  shader->fillin(scan, manager);
+
+  manager->register_finalize(shader);
+
+  return shader;
+}
+
+/**
+ * Receives an array of pointers, one for each time manager->read_pointer()
+ * was called in fillin(). Returns the number of pointers processed.
+ */
+int Shader::
+complete_pointers(TypedWritable **p_list, BamReader *manager) {
+  int pi = TypedWritableReferenceCount::complete_pointers(p_list, manager);
+
+  if (_modules.empty()) {
+    int num_modules = count_bits_in_word(_module_mask);
+    _module_mask = 0u;
+
+    for (int i = 0; i < num_modules; ++i) {
+      ShaderModule *module = DCAST(ShaderModule, p_list[pi++]);
+      _debug._assert_count += module->_assert_count;
+      add_module(module);
+    }
+  }
+
+  return pi;
+}
+
+/**
+ * Some objects require all of their nested pointers to have been completed
+ * before the objects themselves can be completed.  If this is the case,
+ * override this method to return true, and be careful with circular
+ * references (which would make the object unreadable from a bam file).
+ */
+bool Shader::
+require_fully_complete() const {
+  return true;
+}
+
+/**
+ * Called by the BamReader to perform any final actions needed for setting up
+ * the object after all objects have been read and all pointers have been
+ * completed.
+ */
+void Shader::
+finalize(BamReader *manager) {
+  // Since the shader modules may have changed since last time, we have to
+  // re-link the shader (which also binds all of the parameters).
+  if (!link()) {
+    _modules.clear();
+    _module_mask = 0u;
+  }
 }
 
 /**
@@ -4053,11 +1533,34 @@ make_from_bam(const FactoryParams &params) {
  */
 void Shader::
 fillin(DatagramIterator &scan, BamReader *manager) {
-  _language = (ShaderLanguage) scan.get_uint8();
-  _loaded = scan.get_bool();
-  _filename.read_datagram(scan);
-  _text.read_datagram(scan);
+  _language = (SourceLanguage)scan.get_uint8();
+  _debug_name = std::string();
+  _module_mask = 0u;
+  _modules.clear();
 
   _compiled_format = scan.get_uint32();
   _compiled_binary = scan.get_string();
+
+  uint32_t mask = scan.get_uint32();
+  _module_mask = mask;
+  int num_modules = count_bits_in_word(mask);
+
+  _debug._assert_count = 0;
+  for (int i = 0; i < num_modules; ++i) {
+    Stage stage = (Stage)get_lowest_on_bit(mask);
+    mask &= ~(1u << (uint32_t)stage);
+
+    Filename fn = scan.get_string();
+    if (!fn.empty()) {
+      // Compile this module from a source file.
+      //FIXME: store options
+      do_read_source(stage, fn, CompilerOptions(), nullptr);
+    }
+    else {
+      // This module was embedded.
+      manager->read_pointer(scan);
+    }
+  }
+
+  _prepare_shader_pcollector = PStatCollector(std::string("Draw:Prepare:Shader:") + _debug_name);
 }

@@ -1,25 +1,7 @@
 from panda3d.core import Shader, VirtualFileSystem, Filename
 import time
 import pytest
-
-
-@pytest.fixture(scope="session")
-def vfs():
-    return VirtualFileSystem.get_global_ptr()
-
-
-@pytest.fixture
-def ramdir():
-    """Fixture yielding a fresh ramdisk directory."""
-    from panda3d.core import VirtualFileMountRamdisk, Filename
-
-    vfs = VirtualFileSystem.get_global_ptr()
-    mount = VirtualFileMountRamdisk()
-    dir = Filename.temporary("/virtual", "ram.")
-    assert vfs.mount(mount, dir, 0)
-
-    yield dir
-    vfs.unmount(mount)
+import sys
 
 
 def test_shader_load_multi(vfs, ramdir):
@@ -62,7 +44,7 @@ def test_shader_load_compute(vfs, ramdir):
     comp_file = Filename(ramdir, "shader.glsl")
 
     # Now write some actual content to the shader file.
-    vfs.write_file(comp_file, b"#version 100\nvoid main() {}\n", False)
+    vfs.write_file(comp_file, b"#version 420\n#extension GL_ARB_compute_shader : require\nvoid main() {}\n", False)
 
     shad1 = Shader.load_compute(Shader.SL_GLSL, comp_file)
     assert shad1 is not None
@@ -76,7 +58,7 @@ def test_shader_load_compute(vfs, ramdir):
     # After waiting a second to make the timestamp different, modify the
     # shader and load again, it should result in a different object now
     time.sleep(1.0)
-    vfs.write_file(comp_file, b"#version 110\nvoid main() {}\n", False)
+    vfs.write_file(comp_file, b"#version 420\n#extension GL_ARB_compute_shader : require\nuniform int a;void main() {}\n", False)
 
     shad2 = Shader.load_compute(Shader.SL_GLSL, comp_file)
 

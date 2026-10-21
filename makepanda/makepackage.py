@@ -125,7 +125,7 @@ MACOS_SCRIPT_POSTFIX = """\
 fi
 """
 
-EXCLUDE_BINARIES = ["deploy-stub", "deploy-stubw", "run_tests"]
+EXCLUDE_BINARIES = ["deploy-stub", "deploy-stubw", "run_tests", "run_pytest", "run_cxx_tests"]
 
 
 def MakeInstallerNSIS(version, file, title, installdir, compressor="lzma", **kwargs):
@@ -352,9 +352,6 @@ def MakeInstallerLinux(version, debversion=None, rpmversion=None, rpmrelease=1,
             recommends += ", python3-tk"
             provides += ", python3-panda3d"
 
-        if not PkgSkip("NVIDIACG"):
-            depends += ", nvidia-cg-toolkit"
-
         # Write back the dependencies, and delete the dummy set-up.
         txt = txt.replace("DEPENDS", depends.strip(', '))
         txt = txt.replace("RECOMMENDS", recommends.strip(', '))
@@ -386,13 +383,15 @@ def MakeInstallerLinux(version, debversion=None, rpmversion=None, rpmrelease=1,
         txt = INSTALLER_SPEC_FILE[1:]
 
         # Add the MIME associations if we have pview or pstats
-        if not PkgSkip("PVIEW") or not PkgSkip("PSTATS"):
+        have_pview = not PkgSkip("PVIEW")
+        have_pstats = os.path.exists(outputdir + "/bin/pstats")
+        if have_pview or have_pstats:
             txt += INSTALLER_SPEC_FILE_MIME
 
-            if not PkgSkip("PVIEW"):
+            if have_pview:
                 txt += "/usr/share/applications/pview.desktop\n"
 
-            if not PkgSkip("PSTATS"):
+            if have_pstats:
                 txt += "/usr/share/applications/pstats.desktop\n"
 
         # Add the platform-specific Python directories.
@@ -662,7 +661,7 @@ def MakeInstallerOSX(version, python_versions=[], installdir=None, **kwargs):
     dist.write('<installer-script minSpecVersion="1.000000" authoringTool="com.apple.PackageMaker" authoringToolVersion="3.0.3" authoringToolBuild="174">\n')
     dist.write('    <title>Panda3D SDK %s</title>\n' % (version))
     dist.write('    <allowed-os-versions>\n')
-    dist.write('        <os-version min="10.9"/>\n')
+    dist.write('        <os-version min="10.13"/>\n')
     dist.write('    </allowed-os-versions>\n')
     dist.write('    <options customize="always" allow-external-scripts="no" rootVolumeOnly="false" hostArchitectures="x86_64"/>\n')
     dist.write('    <license language="en" mime-type="text/plain">%s</license>\n' % ReadFile("doc/LICENSE"))
@@ -1121,7 +1120,7 @@ if __name__ == "__main__":
 
     # Read out whether we should set PkgSkip("PYTHON") and some others.
     # Temporary hack; needs better solution.
-    pkg_list = "PYTHON", "NVIDIACG", "FFMPEG", "OPENAL", "FMODEX", "PVIEW", "NVIDIACG", "VORBIS", "OPUS"
+    pkg_list = "PYTHON", "FFMPEG", "OPENAL", "FMODEX", "PVIEW", "VORBIS", "OPUS"
     PkgListSet(pkg_list)
     for pkg in pkg_list:
         dat_path = "dtool_have_%s.dat" % (pkg.lower())

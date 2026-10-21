@@ -48,8 +48,9 @@ public:
 
   virtual ~eglGraphicsStateGuardian();
 
+  virtual bool make_current() const;
+
   virtual void reset();
-  virtual bool make_current();
 
   bool egl_is_at_least_version(int major_version, int minor_version) const;
 
@@ -70,7 +71,6 @@ protected:
   virtual void query_gl_version();
   virtual void get_extra_extensions();
   virtual void *do_get_extension_func(const char *name);
-  virtual bool may_support_cg_shaders();
 
 private:
   int _egl_version_major, _egl_version_minor;

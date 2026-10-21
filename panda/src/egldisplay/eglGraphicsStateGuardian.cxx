@@ -53,6 +53,26 @@ eglGraphicsStateGuardian::
 }
 
 /**
+ * Attempts to make the context current on this thread without an associated
+ * window, if possible.  Returns false if that is not supported.
+ */
+bool eglGraphicsStateGuardian::
+make_current() const {
+  if (_context == (EGLContext)nullptr) {
+    return false;
+  }
+  if (eglGetCurrentContext() == _context) {
+    return true;
+  }
+
+  if (_supports_surfaceless) {
+    return eglMakeCurrent(_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, _context) != EGL_FALSE;
+  }
+
+  return false;
+}
+
+/**
  * Gets the FrameBufferProperties to match the indicated config.
  */
 void eglGraphicsStateGuardian::
@@ -283,7 +303,7 @@ reset() {
 #ifdef OPENGLES
   _supports_surfaceless = has_extension("GL_OES_surfaceless_context") &&
 #else
-  _supports_surfaceless =
+  _supports_surfaceless = is_at_least_gl_version(3, 0) &&
 #endif
     has_extension("EGL_KHR_surfaceless_context");
 
@@ -291,23 +311,6 @@ reset() {
     _fbprops.set_force_software(1);
     _fbprops.set_force_hardware(0);
   }
-}
-
-/**
- * Ensures that the context is current.  May return false if the context cannot
- * be bound without a window.
- */
-bool eglGraphicsStateGuardian::
-make_current() {
-  if (eglGetCurrentContext() == _context) {
-    return true;
-  }
-
-  if (_supports_surfaceless) {
-    return eglMakeCurrent(_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, _context) != EGL_FALSE;
-  }
-
-  return false;
 }
 
 /**
@@ -400,13 +403,4 @@ get_extra_extensions() {
 void *eglGraphicsStateGuardian::
 do_get_extension_func(const char *name) {
   return (void *)eglGetProcAddress(name);
-}
-
-/**
- * Returns true if this implementation may support Cg shaders.
- */
-bool eglGraphicsStateGuardian::
-may_support_cg_shaders() {
-  // Never supported under EGL as CgGL is hard-wired to use GLX functions.
-  return false;
 }

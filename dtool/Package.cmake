@@ -88,15 +88,16 @@ if(THIRDPARTY_DIRECTORY)
     ARToolKit
     Assimp
     Bullet
-    Cg
     Eigen3
     FCollada
     FFMPEG
     FMODEx
     Freetype
+    glslang
     HarfBuzz
     JPEG
     LibSquish
+    MIMALLOC
     ODE
     Ogg
     OpenAL
@@ -104,8 +105,11 @@ if(THIRDPARTY_DIRECTORY)
     OpenSSL
     OpusFile
     PNG
+    SPIRV-Cross
+    SPIRV-Tools
     SWResample
     SWScale
+    Tiff
     TIFF
     VorbisFile
     VRPN
@@ -117,9 +121,7 @@ if(THIRDPARTY_DIRECTORY)
 
     # Some packages in the thirdparty dir have different subdirectory names from
     # the name of the CMake package
-    if(_package STREQUAL "cg")
-      set(_package "nvidiacg")
-    elseif(_package STREQUAL "eigen3")
+    if(_package STREQUAL "eigen3")
       set(_package "eigen")
     elseif(_package STREQUAL "ogg")
       set(_package "vorbis") # It's in the same install dir here
@@ -135,6 +137,10 @@ if(THIRDPARTY_DIRECTORY)
 
     # Set search path
     set(${_Package}_ROOT "${THIRDPARTY_DIRECTORY}/${_thirdparty_platform}/${_package}")
+
+    if(_package STREQUAL "spirv-tools")
+      set(${_Package}-opt_ROOT "${${_Package}_ROOT}")
+    endif()
 
     # Set up copying DLLs, if necessary
     file(GLOB _dlls "${${_Package}_ROOT}/bin/*.dll")
@@ -391,11 +397,8 @@ if(HAVE_PYTHON)
     if(_arch_tag STREQUAL "arm64" AND _target VERSION_LESS "11.0")
       set(_target "11.0")
 
-    elseif(PYTHON_VERSION_STRING VERSION_GREATER_EQUAL "3.13" AND _target VERSION_LESS "10.13")
+    elseif(_target VERSION_LESS "10.13")
       set(_target "10.13")
-
-    elseif(PYTHON_VERSION_STRING VERSION_GREATER_EQUAL "3.8" AND _target VERSION_LESS "10.9")
-      set(_target "10.9")
 
     endif()
 
@@ -500,7 +503,7 @@ package_option(JPEG "Enable support for loading .jpg images.")
 package_status(JPEG "libjpeg")
 
 # PNG
-find_package(PNG QUIET)
+find_package(PNG QUIET MODULE)
 
 package_option(PNG
   "Enable support for loading .png images."
@@ -577,6 +580,7 @@ its own internal implementation.  The primary advantage of using
 Eigen is SSE2 support, which is only activated if LINMATH_ALIGN
 is also enabled."
   FOUND_AS Eigen3
+  IMPORTED_AS Eigen3::Eigen
   LICENSE "MPL-2")
 
 option(LINMATH_ALIGN
@@ -807,31 +811,6 @@ package_option(DX9
 
 package_status(DX9 "Direct3D 9.x")
 
-# Nvidia Cg
-find_package(Cg QUIET)
-
-package_option(CG
-  "Enable support for Nvidia Cg Shading Language"
-  LICENSE "Nvidia")
-package_option(CGGL
-  "Enable support for Nvidia Cg's OpenGL API."
-  LICENSE "Nvidia")
-package_option(CGD3D9
-  "Enable support for Nvidia Cg's Direct3D 9 API."
-  LICENSE "Nvidia")
-
-if(HAVE_CGGL AND HAVE_CGD3D9)
-  set(cg_apis "supporting OpenGL and Direct3D 9")
-elseif(HAVE_CGGL)
-  set(cg_apis "supporting OpenGL")
-elseif(HAVE_CGDX9)
-  set(cg_apis "supporting Direct3D 9")
-else()
-  set(cg_apis "WITHOUT rendering backend support")
-endif()
-package_status(CG "Nvidia Cg Shading Language" "${cg_apis}")
-
-
 #
 # ------------ Display APIs ------------
 #
@@ -921,3 +900,42 @@ package_option(VRPN
   are building Panda3D for a fixed VRPN-based VR installation.")
 
 package_status(VRPN "VRPN")
+
+
+#
+# ------------ Shader Pipeline ------------
+#
+
+find_package(glslang QUIET)
+
+package_option(glslang
+  DEFAULT ON
+  "Enables support for compiling GLSL and Cg shaders."
+  IMPORTED_AS glslang::glslang glslang::MachineIndependent glslang::glslang-default-resource-limits)
+
+package_status(glslang "glslang")
+
+
+find_package(SPIRV-Cross QUIET)
+
+package_option(SPIRV-Cross
+  DEFAULT ON
+  "Necessary to support shaders on older OpenGL drivers and DirectX 9."
+  FOUND_AS SPIRV_CROSS)
+
+package_status(SPIRV-Cross "spirv-cross")
+
+
+find_package(SPIRV-Tools QUIET)
+find_package(SPIRV-Tools-opt QUIET)
+
+if(NOT SPIRV-Tools-opt_FOUND)
+  set(SPIRV-Tools_FOUND NO)
+endif()
+
+package_option(SPIRV-Tools
+  DEFAULT ON
+  "Enables optimization and validation of compiled shaders."
+  IMPORTED_AS SPIRV-Tools-static SPIRV-Tools-opt)
+
+package_status(SPIRV-Tools "spirv-tools")

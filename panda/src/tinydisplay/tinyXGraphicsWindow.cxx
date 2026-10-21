@@ -37,13 +37,13 @@ TypeHandle TinyXGraphicsWindow::_type_handle;
  */
 TinyXGraphicsWindow::
 TinyXGraphicsWindow(GraphicsEngine *engine, GraphicsPipe *pipe,
-                    const std::string &name,
+                    std::string name,
                     const FrameBufferProperties &fb_prop,
                     const WindowProperties &win_prop,
                     int flags,
                     GraphicsStateGuardian *gsg,
                     GraphicsOutput *host) :
-  x11GraphicsWindow(engine, pipe, name, fb_prop, win_prop, flags, gsg, host)
+  x11GraphicsWindow(engine, pipe, std::move(name), fb_prop, win_prop, flags, gsg, host)
 {
   _gc = (GC)nullptr;
 
@@ -103,7 +103,12 @@ begin_frame(FrameMode mode, Thread *current_thread) {
   tinygsg->reset_if_new();
 
   _gsg->set_current_properties(&get_fb_properties());
-  return _gsg->begin_frame(current_thread);
+  if (_gsg->begin_frame(current_thread)) {
+    copy_async_screenshot();
+    return true;
+  } else {
+    return false;
+  }
 }
 
 /**

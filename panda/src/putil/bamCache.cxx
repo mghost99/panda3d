@@ -77,10 +77,10 @@ BamCache() :
               "model-cache-textures, or it may be independent."));
 
   ConfigVariableBool model_cache_compiled_shaders
-    ("model-cache-compiled-shaders", false,
+    ("model-cache-compiled-shaders", true,
      PRC_DESC("If this is set to true, compiled shaders will be cached "
-              "in the model cache, in their binary form as downloaded "
-              "by the GSG."));
+              "in the model cache, in their binary form as compiled by the "
+              "shader compiler."));
 
   ConfigVariableInt model_cache_max_kbytes
     ("model-cache-max-kbytes", 10485760,
@@ -162,7 +162,7 @@ set_root(const Filename &root) {
  * record to disk.
  */
 PT(BamCacheRecord) BamCache::
-lookup(const Filename &source_filename, const string &cache_extension) {
+lookup(const Filename &source_filename, std::string_view cache_extension) {
   ReMutexHolder holder(_lock);
   consider_flush_index();
 
@@ -1047,7 +1047,7 @@ reset_in_memory_index() {
  * fullpath string to the source filename.
  */
 string BamCache::
-hash_filename(const string &filename) {
+hash_filename(std::string_view filename) {
   // Use the MD5 hash of the filename.
   HashVal hv;
   hv.hash_string(filename);

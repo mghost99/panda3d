@@ -64,8 +64,8 @@ fillin(DatagramIterator &scan, BamReader *manager) {
  *
  */
 Spotlight::
-Spotlight(const std::string &name) :
-  LightLensNode(name) {
+Spotlight(std::string name) :
+  LightLensNode(std::move(name)) {
   _lenses[0]._lens->set_interocular_distance(0);
 }
 
@@ -181,6 +181,7 @@ make_spot(int pixel_width, PN_stdfloat full_radius, LColor &fg, LColor &bg) {
   tex->set_border_color(bg);
   tex->set_wrap_u(SamplerState::WM_border_color);
   tex->set_wrap_v(SamplerState::WM_border_color);
+  tex->set_wrap_w(SamplerState::WM_border_color);
 
   tex->set_minfilter(SamplerState::FT_linear);
   tex->set_magfilter(SamplerState::FT_linear);

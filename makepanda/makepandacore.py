@@ -22,7 +22,7 @@ import _thread as thread
 import time
 import locations
 
-SUFFIX_INC = [".cxx",".cpp",".c",".h",".I",".yxx",".lxx",".mm",".rc",".r"]
+SUFFIX_INC = [".cxx",".cpp",".c",".h",".hpp",".I",".yxx",".lxx",".mm",".rc",".r"]
 SUFFIX_DLL = [".dll",".dlo",".dle",".dli",".dlm",".mll",".exe",".pyd",".ocx"]
 SUFFIX_LIB = [".lib",".ilb"]
 VCS_DIRS = set(["CVS", "CVSROOT", ".git", ".hg", "__pycache__"])
@@ -89,6 +89,7 @@ MSVCVERSIONINFO = {
     (14,1): {"vsversion":(15,0), "vsname":"Visual Studio 2017"},
     (14,2): {"vsversion":(16,0), "vsname":"Visual Studio 2019"},
     (14,3): {"vsversion":(17,0), "vsname":"Visual Studio 2022"},
+    (14,5): {"vsversion":(18,0), "vsname":"Visual Studio 2026"},
 }
 
 ########################################################################
@@ -307,6 +308,9 @@ def GetHostArch():
 
     target = GetTarget()
     if target == 'windows':
+        machine = platform.machine().lower()
+        if machine in ('arm64', 'aarch64'):
+            return 'arm64'
         return 'x64' if host_64 else 'x86'
 
     machine = platform.machine()
@@ -340,9 +344,11 @@ def SetTarget(target, arch=None):
             arch = 'x86'
         elif arch == 'amd64':
             arch = 'x64'
+        elif arch == 'aarch64':
+            arch = 'arm64'
 
-        if arch is not None and arch != 'x86' and arch != 'x64':
-            exit("Windows architecture must be x86 or x64")
+        if arch is not None and arch not in ('x86', 'x64', 'arm64'):
+            exit("Windows architecture must be x86, x64 or arm64")
 
     elif target == 'darwin':
         DEFAULT_CC = "clang"
@@ -592,8 +598,8 @@ def GetInterrogateDir():
             return INTERROGATE_DIR
 
         dir = os.path.join(GetOutputDir(), "tmp", "interrogate")
-        if not os.path.isdir(os.path.join(dir, "panda3d_interrogate-0.8.1.dist-info")):
-            oscmd("\"%s\" -m pip install --force-reinstall --upgrade -t \"%s\" panda3d-interrogate==0.8.1" % (sys.executable, dir))
+        if not os.path.isdir(os.path.join(dir, "panda3d_interrogate-0.11.2.dist-info")):
+            oscmd("\"%s\" -m pip install --force-reinstall --upgrade -t \"%s\" panda3d-interrogate==0.11.2" % (sys.executable, dir))
 
         INTERROGATE_DIR = dir
 
@@ -666,7 +672,10 @@ def LocateBinary(binary):
 
 def oscmd(cmd, ignoreError = False, cwd=None):
     if VERBOSE:
-        print(GetColor("blue") + cmd.split(" ", 1)[0] + " " + GetColor("magenta") + cmd.split(" ", 1)[1] + GetColor())
+        if " " in cmd:
+            print(GetColor("blue") + cmd.split(" ", 1)[0] + " " + GetColor("magenta") + cmd.split(" ", 1)[1] + GetColor())
+        else:
+            print(GetColor("blue") + cmd + GetColor())
     sys.stdout.flush()
 
     if cmd[0] == '"':
@@ -1393,6 +1402,8 @@ def GetThirdpartyDir():
 
         if target_arch == 'x64':
             THIRDPARTYDIR = base + "/win-libs-vc" + vc + "-x64/"
+        elif target_arch == 'arm64':
+            THIRDPARTYDIR = base + "/win-libs-vc" + vc + "-arm64/"
         else:
             THIRDPARTYDIR = base + "/win-libs-vc" + vc + "/"
 
@@ -1744,7 +1755,7 @@ def ChooseLib(libs, thirdparty=None):
             print(ColorText("cyan", "Couldn't find any of the libraries " + ", ".join(libs)))
         return libs[0]
 
-def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None, framework = None, target_pkg = None, tool = "pkg-config", thirdparty_dir = None):
+def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None, framework = None, target_pkg = None, tool = "pkg-config", thirdparty_dir = None, optional_libs = None):
     global PKG_LIST_ALL
     if (pkg in PkgListGet() and PkgSkip(pkg)):
         return
@@ -1758,6 +1769,10 @@ def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None,
         libs = ()
     elif (isinstance(libs, str)):
         libs = (libs, )
+    if (optional_libs is None or optional_libs == ""):
+        optional_libs = ()
+    elif (isinstance(optional_libs, str)):
+        optional_libs = (optional_libs, )
     if (incs is None or incs == ""):
         incs = ()
     elif (isinstance(incs, str)):
@@ -1846,6 +1861,14 @@ def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None,
                 else:
                     print(GetColor("cyan") + "Couldn't find library lib" + libname + " in thirdparty directory " + thirdparty_dir + GetColor())
 
+        for libname in optional_libs:
+            location = LocateLibrary(libname, lpath, prefer_static=True)
+            if location is not None:
+                # If it's a .so or .dylib we may have changed it and copied it to the built/lib dir.
+                if location.endswith('.so') or location.endswith('.dylib'):
+                    location = os.path.join(GetOutputDir(), "lib", os.path.basename(location))
+                LibName(target_pkg, location)
+
         for d, v in defs.values():
             DefSymbol(target_pkg, d, v)
         return
@@ -1889,6 +1912,7 @@ def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None,
     else:
         # Okay, our pkg-config attempts failed. Let's try locating the libs by ourselves.
         have_pkg = True
+        in_system = False
         for l in libs:
             libname = l
             if l.startswith("lib"):
@@ -1907,6 +1931,7 @@ def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None,
             elif SystemLibraryExists(libname):
                 # It exists in a system library directory.
                 LibName(target_pkg, "-l" + libname)
+                in_system = True
             else:
                 # Try searching in the package's LibDirectories.
                 lpath = [dir for ppkg, dir in LIBDIRECTORIES if pkg == ppkg or ppkg == "ALWAYS"]
@@ -1917,6 +1942,24 @@ def SmartPkgEnable(pkg, pkgconfig = None, libs = None, incs = None, defs = None,
                     have_pkg = False
                     if VERBOSE or custom_loc:
                         print(GetColor("cyan") + "Couldn't find library lib" + libname + GetColor())
+
+        for libname in optional_libs:
+            if custom_loc:
+                # Try searching in the package's LibDirectories.
+                lpath = [dir for ppkg, dir in LIBDIRECTORIES if pkg == ppkg]
+                location = LocateLibrary(libname, lpath)
+                if location is not None:
+                    LibName(target_pkg, location)
+
+            elif in_system and SystemLibraryExists(libname):
+                # It exists in a system library directory.
+                LibName(target_pkg, "-l" + libname)
+            else:
+                # Try searching in the package's LibDirectories.
+                lpath = [dir for ppkg, dir in LIBDIRECTORIES if pkg == ppkg or ppkg == "ALWAYS"]
+                location = LocateLibrary(libname, lpath)
+                if location is not None:
+                    LibName(target_pkg, "-l" + libname)
 
         # Determine which include directories to look in.
         incdirs = []
@@ -2125,6 +2168,8 @@ def SdkLocatePython(prefer_thirdparty_python=False):
                 sdkdir += "-dbg"
             if GetTargetArch() == 'x64':
                 sdkdir += "-x64"
+            elif GetTargetArch() == 'arm64':
+                sdkdir += "-arm64"
 
         sdkdir = sdkdir.replace('\\', '/')
         SDK["PYTHON"] = sdkdir
@@ -2283,6 +2328,9 @@ def SdkLocatePython(prefer_thirdparty_python=False):
 
 def SdkLocateVisualStudio(version=(10,0)):
     if (GetHost() != "windows"): return
+
+    if version == (14, 4):
+        exit("There is no MSVC 14.4; Visual Studio 2026 uses MSVC 14.5.")
 
     try:
         msvcinfo = MSVCVERSIONINFO[version]
@@ -2481,7 +2529,7 @@ def SdkLocateMacOSX(archs = []):
     sdk_versions = []
     if 'arm64' not in archs:
         # Prefer pre-10.14 for now so that we can keep building FMOD.
-        sdk_versions += ["10.13", "10.12"]
+        sdk_versions += ["10.13"]
 
     sdk_versions += ["15.5", "15.4", "15.2", "15.1", "15.0", "14.5", "14.4", "14.2", "14.0", "13.3", "13.1", "13.0", "12.3", "11.3", "11.1", "11.0"]
 
@@ -2677,6 +2725,36 @@ def SdkLocateAndroid():
 
         SDK["JDK"] = jdk_home
 
+def SdkLocateVulkan():
+    if GetTarget() not in ('windows', 'darwin'):
+        return
+
+    path = os.environ.get('VULKAN_SDK')
+    if path and os.path.isdir(path):
+        print("Using Vulkan SDK at %s" % (path))
+        SDK["VULKAN"] = path
+        return
+
+    if GetHost() != 'windows' or GetTarget() != 'windows':
+        return
+
+    path = 'C:/VulkanSDK'
+    if os.path.isdir(path):
+        # Enumerate the available Vulkan SDK versions.
+        versions = []
+        for dir in os.listdir(path):
+            try:
+                versions.append(tuple([int(i) for i in dir.split('.')]))
+            except ValueError:
+                pass
+
+        # Use the latest version.
+        versions.sort()
+        version = '.'.join([str(i) for i in versions[-1]])
+
+        print("Using Vulkan SDK %s" % (version))
+        SDK["VULKAN"] = path + '/' + version
+
 ########################################################################
 ##
 ## SDK Auto-Disables
@@ -2701,6 +2779,12 @@ def SdkAutoDisableSpeedTree():
         PkgDisable("SPEEDTREE")
         WARNINGS.append("I cannot locate SDK for SpeedTree")
         WARNINGS.append("I have automatically added this command-line option: --no-speedtree")
+
+def SdkAutoDisableVulkan():
+    if "VULKAN" not in SDK and not PkgSkip("VULKAN"):
+        PkgDisable("VULKAN")
+        WARNINGS.append("I cannot locate SDK for Vulkan")
+        WARNINGS.append("I have automatically added this command-line option: --no-vulkan")
 
 ########################################################################
 ##
@@ -2767,6 +2851,8 @@ def SetupVisualStudioEnviron():
         # Try the x86 tools, those should work just as well.
         if arch == 'x64' and os.path.isfile(vc_binpath + "\\x86_amd64\\cl.exe"):
             binpath = "{0}\\x86_amd64;{0}".format(vc_binpath)
+        elif arch == 'arm64' and os.path.isfile(vc_binpath + "\\Hostx64\\arm64\\cl.exe"):
+            binpath = "{0}\\Hostx64\\arm64;{0}".format(vc_binpath)
         elif winsdk_ver.startswith('10.'):
             exit("Couldn't find compilers in %s.  You may need to install the Windows SDK 7.1 and the Visual C++ 2010 SP1 Compiler Update for Windows SDK 7.1." % binpath)
         else:
@@ -3038,6 +3124,20 @@ def SetupBuildEnvironment(compiler):
                 libdir += '64'
             SYS_LIB_DIRS += [libdir]
 
+        # On multiarch systems, system libraries live under /usr/lib/<triplet>.
+        # On some systems these don't show up in -print-search-dirs, so we try
+        # to check for this manually.
+        if target == 'linux':
+            handle = os.popen(GetCXX() + " -print-multiarch 2>/dev/null")
+            triplet = handle.read().strip()
+            handle.close()
+            if triplet:
+                sysroot = SDK.get("SYSROOT", "")
+                for prefix in ("/usr/lib/", "/lib/", "/usr/local/lib/"):
+                    libdir = os.path.normpath(sysroot + prefix + triplet)
+                    if os.path.isdir(libdir) and libdir not in SYS_LIB_DIRS:
+                        SYS_LIB_DIRS.append(libdir)
+
         if sys.platform != "darwin":
             # Some Linux distributions (eg. Fedora) don't add /usr/local/lib64
             if ("/usr/lib64" in SYS_LIB_DIRS and
@@ -3186,7 +3286,7 @@ def CopyAllFiles(dstdir, srcdir, suffix=""):
         CopyFile(dstdir + x, srcdir + x)
 
 def CopyAllHeaders(dir, skip=[]):
-    for filename in GetDirectoryContents(dir, ["*.h", "*.I", "*.T"], skip):
+    for filename in GetDirectoryContents(dir, ["*.h", "*.hpp", "*.I", "*.T"], skip):
         srcfile = dir + "/" + filename
         dstfile = OUTPUTDIR + "/include/" + filename
         if (NeedsBuild([dstfile], [srcfile])):
@@ -3437,6 +3537,8 @@ def GetExtensionSuffix():
         suffix = 't' if gil_disabled and int(gil_disabled) else ''
         if GetTargetArch() == 'x64':
             return dllext + '.cp%d%d%s-win_amd64.pyd' % (sys.version_info[0], sys.version_info[1], suffix)
+        elif GetTargetArch() == 'arm64':
+            return dllext + '.cp%d%d%s-win_arm64.pyd' % (sys.version_info[0], sys.version_info[1], suffix)
         else:
             return dllext + '.cp%d%d%s-win32.pyd' % (sys.version_info[0], sys.version_info[1], suffix)
     elif target == 'emscripten':
@@ -3481,6 +3583,7 @@ def CalcLocation(fn, ipath):
     if (fn == "AndroidManifest.xml"): return OUTPUTDIR+"/"+fn
     if (fn == "classes.dex"): return OUTPUTDIR+"/"+fn
     if (fn.endswith(".cxx")): return CxxFindSource(fn, ipath)
+    if (fn.endswith(".cpp")): return CxxFindSource(fn, ipath)
     if (fn.endswith(".I")):   return CxxFindSource(fn, ipath)
     if (fn.endswith(".h")):   return CxxFindSource(fn, ipath)
     if (fn.endswith(".c")):   return CxxFindSource(fn, ipath)

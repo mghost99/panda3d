@@ -78,6 +78,21 @@ glxGraphicsStateGuardian::
 }
 
 /**
+ * Attempts to make the context current on this thread without an associated
+ * window, if possible.  Returns false if that is not supported.
+ */
+bool glxGraphicsStateGuardian::
+make_current() const {
+  if (glXGetCurrentContext() == _context) {
+    return true;
+  }
+
+  return _context != nullptr
+      && is_at_least_gl_version(3, 0)
+      && glXMakeCurrent(_display, None, _context);
+}
+
+/**
  * Gets the FrameBufferProperties to match the indicated visual.
  */
 void glxGraphicsStateGuardian::
@@ -435,19 +450,6 @@ choose_pixel_format(const FrameBufferProperties &properties,
 }
 
 /**
- * Ensures that the context is current.  May return false if the context cannot
- * be bound without a window.
- */
-bool glxGraphicsStateGuardian::
-make_current() {
-  if (glXGetCurrentContext() == _context) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
  * Returns true if the runtime GLX version number is at least the indicated
  * value, false otherwise.
  */
@@ -583,18 +585,6 @@ do_get_extension_func(const char *name) {
 
   // Otherwise, fall back to the OS-provided calls.
   return PosixGraphicsStateGuardian::do_get_extension_func(name);
-}
-
-/**
- * Returns true if this implementation may support Cg shaders.
- */
-bool glxGraphicsStateGuardian::
-may_support_cg_shaders() {
-#ifdef HAVE_CG
-  return true;
-#else
-  return false;
-#endif
 }
 
 /**
@@ -745,7 +735,7 @@ query_glx_extensions() {
  * Outputs the result of glxGetClientString() on the indicated tag.
  */
 void glxGraphicsStateGuardian::
-show_glx_client_string(const string &name, int id) {
+show_glx_client_string(std::string_view name, int id) {
   if (glgsg_cat.is_debug()) {
     const char *text = glXGetClientString(_display, id);
     if (text == nullptr) {
@@ -762,7 +752,7 @@ show_glx_client_string(const string &name, int id) {
  * Outputs the result of glxQueryServerString() on the indicated tag.
  */
 void glxGraphicsStateGuardian::
-show_glx_server_string(const string &name, int id) {
+show_glx_server_string(std::string_view name, int id) {
   if (glgsg_cat.is_debug()) {
     const char *text = glXQueryServerString(_display, _screen, id);
     if (text == nullptr) {

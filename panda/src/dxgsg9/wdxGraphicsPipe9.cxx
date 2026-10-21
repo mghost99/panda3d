@@ -80,7 +80,7 @@ pipe_constructor() {
  * Creates a new window on the pipe, if possible.
  */
 PT(GraphicsOutput) wdxGraphicsPipe9::
-make_output(const std::string &name,
+make_output(std::string_view name,
             const FrameBufferProperties &fb_prop,
             const WindowProperties &win_prop,
             int flags,
@@ -120,13 +120,16 @@ make_output(const std::string &name,
         return nullptr;
       }
     }
-    return new wdxGraphicsWindow9(engine, this, name, fb_prop, win_prop,
+    return new wdxGraphicsWindow9(engine, this, std::string(name), fb_prop, win_prop,
                                   flags, gsg, host);
   }
 
   // Second thing to try: a wdxGraphicsBuffer9
 
   if (retry == 1) {
+    if (wdxgsg == nullptr) {
+      return nullptr;
+    }
     if ((!support_render_texture)||
         ((flags&BF_require_parasite)!=0)||
         ((flags&BF_require_window)!=0)||
@@ -151,7 +154,7 @@ make_output(const std::string &name,
         wdxgsg->get_supports_render_texture()) {
       precertify = true;
     }
-    return new wdxGraphicsBuffer9(engine, this, name, fb_prop, win_prop,
+    return new wdxGraphicsBuffer9(engine, this, std::string(name), fb_prop, win_prop,
                                   flags, gsg, host);
   }
 
@@ -202,6 +205,12 @@ init() {
   }
 
   Init_D3DFORMAT_map();
+
+  if (__d3d9->GetAdapterCount() == 0) {
+    wdxdisplay9_cat.error()
+      << "No available D3D9 devices found.\n";
+    goto error;
+  }
 
   if (dx_count_all_cards_memory){
     return find_all_card_memavails();

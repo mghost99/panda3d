@@ -26,13 +26,13 @@ TypeHandle eglGraphicsBuffer::_type_handle;
  */
 eglGraphicsBuffer::
 eglGraphicsBuffer(GraphicsEngine *engine, GraphicsPipe *pipe,
-                  const std::string &name,
+                  std::string name,
                   const FrameBufferProperties &fb_prop,
                   const WindowProperties &win_prop,
                   int flags,
                   GraphicsStateGuardian *gsg,
                   GraphicsOutput *host) :
-  GraphicsBuffer(engine, pipe, name, fb_prop, win_prop, flags, gsg, host)
+  GraphicsBuffer(engine, pipe, std::move(name), fb_prop, win_prop, flags, gsg, host)
 {
   eglGraphicsPipe *egl_pipe;
   DCAST_INTO_V(egl_pipe, _pipe);
@@ -95,7 +95,12 @@ begin_frame(FrameMode mode, Thread *current_thread) {
   }
 
   _gsg->set_current_properties(&get_fb_properties());
-  return _gsg->begin_frame(current_thread);
+  if (_gsg->begin_frame(current_thread)) {
+    copy_async_screenshot();
+    return true;
+  } else {
+    return false;
+  }
 }
 
 /**
@@ -152,7 +157,10 @@ close_buffer() {
   if (_gsg != nullptr) {
     eglGraphicsStateGuardian *eglgsg;
     DCAST_INTO_V(eglgsg, _gsg);
-    if (!eglMakeCurrent(_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
+
+    // Try to keep the GSG bound surfaceless if possible, otherwise unbind.
+    if (!eglgsg->make_current() &&
+        !eglMakeCurrent(_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
       egldisplay_cat.error() << "Failed to call eglMakeCurrent: "
         << get_egl_error_string(eglGetError()) << "\n";
     }

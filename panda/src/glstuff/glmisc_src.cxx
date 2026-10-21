@@ -33,6 +33,16 @@ ConfigVariableBool gl_support_fbo
             "EXT_framebuffer_object is broken.  The system might still be "
             "able to create buffers using pbuffers or the like."));
 
+ConfigVariableBool gl_support_spirv
+  ("gl-support-spirv", true,
+   PRC_DESC("True to use the graphics driver's support for SPIR-V shaders if "
+            "available, false to transpile all SPIR-V shaders to GLSL first."));
+
+ConfigVariableInt gl_force_glsl_version
+  ("gl-force-glsl-version", "",
+   PRC_DESC("Set this to force the use of a specific GLSL version when "
+            "cross-compiling a SPIR-V shader to GLSL."));
+
 ConfigVariableBool gl_cheap_textures
   ("gl-cheap-textures", false,
    PRC_DESC("Configure this true to glHint the textures into the cheapest "
@@ -244,7 +254,11 @@ ConfigVariableBool gl_dump_compiled_shaders
             "into the current directory."));
 
 ConfigVariableBool gl_validate_shaders
+#ifdef NDEBUG
+  ("gl-validate-shaders", false,
+#else
   ("gl-validate-shaders", true,
+#endif
    PRC_DESC("Set this to true to enable glValidateShader the first time "
             "a shader is bound.  This may cause helpful information about "
             "shaders to be printed."));
@@ -348,9 +362,6 @@ void CLP(init_classes)() {
   CLP(IndexBufferContext)::init_type();
 #ifndef OPENGLES_1
   CLP(ShaderContext)::init_type();
-#endif
-#if defined(HAVE_CG) && !defined(OPENGLES)
-  CLP(CgShaderContext)::init_type();
 #endif
   CLP(TextureContext)::init_type();
 #ifndef OPENGLES
