@@ -485,13 +485,31 @@ get_screenshot(Thread *current_thread) {
   // Are we on the draw thread?
   if (gsg->get_threading_model().get_draw_stage() != current_thread->get_pipeline_stage()) {
     // Ask the engine to do on the draw thread.
+    // Note: run_on_thread() temporarily gives the draw thread the caller's
+    // pipeline stage, so calling get_screenshot() again from the callback
+    // would fail this check, recurse into run_on_draw_thread() and deadlock
+    // on the engine lock the caller holds (any threading-model with a
+    // separate draw thread).  Call the implementation directly.
     GraphicsEngine *engine = window->get_engine();
     return engine->run_on_draw_thread([this] (Thread *current_thread) {
-      return get_screenshot(current_thread);
+      return do_get_screenshot(current_thread);
     });
   }
 
-  // We are on the draw thread.
+  return do_get_screenshot(current_thread);
+}
+
+/**
+ * The implementation of get_screenshot(); must be called on the draw thread.
+ */
+PT(Texture) DisplayRegion::
+do_get_screenshot(Thread *current_thread) {
+  GraphicsOutput *window = get_window();
+  nassertr(window != nullptr, nullptr);
+
+  GraphicsStateGuardian *gsg = window->get_gsg();
+  nassertr(gsg != nullptr, nullptr);
+
   if (!window->begin_frame(GraphicsOutput::FM_refresh, current_thread)) {
     return nullptr;
   }
@@ -507,6 +525,8 @@ get_screenshot(Thread *current_thread) {
   RenderBuffer buffer = gsg->get_render_buffer(get_screenshot_buffer_type(),
                                                _window->get_fb_properties());
   if (!gsg->framebuffer_copy_to_ram(tex, 0, -1, this, buffer)) {
+    // Still close the frame we opened, or the GSG is left mid-frame.
+    window->end_frame(GraphicsOutput::FM_refresh, current_thread);
     return nullptr;
   }
 

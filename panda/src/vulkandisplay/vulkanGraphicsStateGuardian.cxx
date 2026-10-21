@@ -2397,6 +2397,10 @@ prepare_vertex_buffer(GeomVertexArrayData *array_data) {
 
   VkBuffer buffer;
   VulkanMemoryBlock block;
+  // Vulkan forbids zero-sized buffers; the array may still be empty here
+  // (e.g. seen from the draw thread's pipeline stage before its data has
+  // cycled through).  update_vertex_buffer() grows it when data arrives.
+  data_size = std::max(data_size, (VkDeviceSize)16);
   if (!create_buffer(data_size, buffer, block,
                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      mem_flags)) {
@@ -2433,6 +2437,17 @@ update_vertex_buffer(VulkanVertexBufferContext *vbc,
       const unsigned char *client_pointer = reader->get_read_pointer(force);
       if (client_pointer == nullptr) {
         return false;
+      }
+
+      if (num_bytes > (VkDeviceSize)vbc->get_data_size_bytes()) {
+        // The array grew (or was empty when prepared): the old buffer is too
+        // small, and copying into it would overrun it.
+        if (!regrow_buffer(num_bytes, vbc->_buffer, vbc->_block,
+                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)) {
+          return false;
+        }
+        vbc->update_data_size_bytes(num_bytes);
+        vbc->_last_use_frame = 0;
       }
 
       bool use_staging_buffer = true;
@@ -2556,6 +2571,7 @@ prepare_index_buffer(GeomPrimitive *primitive) {
 
   VkBuffer buffer;
   VulkanMemoryBlock block;
+  data_size = std::max(data_size, (VkDeviceSize)16);
   if (!create_buffer(data_size, buffer, block,
                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      mem_flags)) {
@@ -2610,6 +2626,15 @@ update_index_buffer(VulkanIndexBufferContext *ibc,
         vulkandisplay_cat.error()
           << "Unsupported index type: " << index_type;
         return false;
+      }
+
+      if (num_bytes > (VkDeviceSize)ibc->get_data_size_bytes()) {
+        if (!regrow_buffer(num_bytes, ibc->_buffer, ibc->_block,
+                           VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)) {
+          return false;
+        }
+        ibc->update_data_size_bytes(num_bytes);
+        ibc->_last_use_frame = 0;
       }
 
       bool use_staging_buffer = true;
@@ -4766,7 +4791,10 @@ framebuffer_copy_to_ram(Texture *tex, int view, int z, const DisplayRegion *dr,
     fbtc = _fb_depth_tc;
   }
 
-  nassertr(fbtc != nullptr, false);
+  if (fbtc == nullptr) {
+    // Nothing has been rendered to this target yet.
+    return false;
+  }
 
   //TODO: proper format checking and size calculation.
   Texture::ComponentType type = Texture::T_unsigned_byte;
@@ -5062,6 +5090,34 @@ do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset) {
   }
 
   vkCmdSetViewport(_render_cmd, 0, count, viewports);
+}
+
+/**
+ * Replaces a buffer with a new one of at least the given size (contents are
+ * not preserved).  The old buffer is destroyed once the current frame is done.
+ */
+bool VulkanGraphicsStateGuardian::
+regrow_buffer(VkDeviceSize size, VkBuffer &buffer, VulkanMemoryBlock &block,
+              VkBufferUsageFlags usage) {
+  VkMemoryPropertyFlagBits mem_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  if (_has_unified_memory) {
+    mem_flags = (VkMemoryPropertyFlagBits)(mem_flags | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+  }
+  VkBuffer new_buffer;
+  VulkanMemoryBlock new_block;
+  if (!create_buffer(size, new_buffer, new_block, usage, mem_flags)) {
+    vulkandisplay_cat.error()
+      << "Failed to grow buffer to " << size << " bytes.\n";
+    return false;
+  }
+  VulkanFrameData &frame_data = get_frame_data();
+  if (buffer != VK_NULL_HANDLE) {
+    frame_data._pending_destroy_buffers.push_back(buffer);
+  }
+  frame_data._pending_free.push_back(std::move(block));
+  buffer = new_buffer;
+  block = std::move(new_block);
+  return true;
 }
 
 /**

@@ -137,6 +137,19 @@ begin_frame(FrameMode mode, Thread *current_thread) {
   copy_async_screenshot();
 
   if (mode == FM_refresh) {
+    // FM_refresh is used to read back the window (get_screenshot).  Point the
+    // GSG at the image holding the most recently rendered frame rather than
+    // whatever framebuffer happened to be bound last, which is wrong after an
+    // offscreen buffer was drawn and unset before the window's first frame
+    // (e.g. on the draw thread with threading-model Cull/Draw).
+    if (_last_rendered_index >= 0 &&
+        (size_t)_last_rendered_index < _swap_buffers.size()) {
+      vkgsg->_fb_color_tc = _swap_buffers[_last_rendered_index]._tc;
+      vkgsg->_fb_depth_tc = _depth_stencil_tc;
+    } else {
+      vkgsg->_fb_color_tc = nullptr;
+      vkgsg->_fb_depth_tc = nullptr;
+    }
     return true;
   }
 
@@ -202,6 +215,7 @@ end_frame(FrameMode mode, Thread *current_thread) {
     copy_to_textures();
 
     signal_done = buffer._render_complete;
+    _last_rendered_index = (int)_image_index;
 
     // If we copied the textures, transition it back to the present state.
     //if (buffer._tc->_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
@@ -582,6 +596,8 @@ destroy_swapchain() {
   VulkanGraphicsStateGuardian *vkgsg;
   DCAST_INTO_V(vkgsg, _gsg);
   VkDevice device = vkgsg->_device;
+
+  _last_rendered_index = -1;
 
   // An acquire semaphore left over from an end_flip() whose acquire failed
   // (swapchain out of date, e.g. after a resize) would otherwise be

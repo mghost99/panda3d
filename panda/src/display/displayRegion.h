@@ -205,6 +205,7 @@ private:
   void win_display_regions_changed();
   void do_compute_pixels(int i, int x_size, int y_size, CData *cdata);
   void set_active_index(int index);
+  PT(Texture) do_get_screenshot(Thread *current_thread);
 
 protected:
   virtual void do_cull(CullHandler *cull_handler, SceneSetup *scene_setup,

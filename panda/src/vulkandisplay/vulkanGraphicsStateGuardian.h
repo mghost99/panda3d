@@ -189,6 +189,8 @@ private:
   void do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset);
 
 public:
+  bool regrow_buffer(VkDeviceSize size, VkBuffer &buffer, VulkanMemoryBlock &block,
+                     VkBufferUsageFlags usage);
   bool create_buffer(VkDeviceSize size, VkBuffer &buffer, VulkanMemoryBlock &block,
                      int usage_flags, VkMemoryPropertyFlagBits flags);
   bool create_image(VulkanTextureContext *tc, VkImageType type, VkFormat format,

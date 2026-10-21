@@ -82,6 +82,8 @@ private:
   typedef pvector<SwapBuffer> SwapBuffers;
   SwapBuffers _swap_buffers;
   uint32_t _image_index = 0;
+  // Swapchain image that holds the most recently rendered frame (-1: none).
+  int _last_rendered_index = -1;
 
   VulkanTextureContext *_ms_color_tc = nullptr;
   VulkanTextureContext *_depth_stencil_tc = nullptr;
