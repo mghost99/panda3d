@@ -756,7 +756,15 @@ service_one_task(AsyncTaskChain::AsyncTaskChainThread *thread) {
           // The task had an exception and wants to raise a big flag.
           task->_state = AsyncTask::S_active;
           _next_active.push_back(task);
-          if (_state == S_started) {
+          // S_initial happens when a task stopped the threads while we are
+          // polling (e.g. GraphicsEngine::remove_all_windows() calls
+          // AsyncTaskManager::stop_threads()) and then raised, as in
+          // "base.graphicsEngine.removeAllWindows(); sys.exit()".  If we kept
+          // going, the remaining tasks would run with the Python exception
+          // still set; the next C call (e.g. Messenger's lock.acquire())
+          // then "fails" after taking the lock, which is never released and
+          // hangs ShowBase's exit handler.
+          if (_state == S_started || _state == S_initial) {
             _state = S_interrupted;
             _cvar.notify_all();
           }
